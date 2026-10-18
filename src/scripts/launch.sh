@@ -39,6 +39,14 @@ INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','comman
 INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','supportedOrientation','U');
 EOF
 
+# Close a Notebooks window left open from last time. Otherwise the app
+# manager just brings back the old page, still running the old code and
+# showing old highlights.
+lipc-set-prop com.lab126.appmgrd stop "app://$APP_ID" >/dev/null 2>&1
+for PID in $(ps | grep "mesquite -l $APP_ID" | grep -v grep | awk '{print $1}'); do
+    kill "$PID" 2>/dev/null
+done
+
 # Restart the helper so a new version (or a stuck one) is always replaced.
 if [ -f "$RUN/helper.pid" ]; then
     kill "$(cat "$RUN/helper.pid")" 2>/dev/null
