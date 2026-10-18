@@ -39,25 +39,43 @@ INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','comman
 INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','supportedOrientation','U');
 EOF
 
-# Close a Notebooks window left open from last time. Otherwise the app
-# manager just brings back the old page, still running the old code and
-# showing old highlights.
-lipc-set-prop com.lab126.appmgrd stop "app://$APP_ID" >/dev/null 2>&1
-for PID in $(ps | grep "mesquite -l $APP_ID" | grep -v grep | awk '{print $1}'); do
-    kill "$PID" 2>/dev/null
-done
+VERSION="$(cat "$BASE/VERSION" 2>/dev/null)"
+APP_PIDS="$(ps | grep "mesquite -l $APP_ID" | grep -v grep | awk '{print $1}')"
 
-# Restart the helper so a new version (or a stuck one) is always replaced.
-if [ -f "$RUN/helper.pid" ]; then
-    kill "$(cat "$RUN/helper.pid")" 2>/dev/null
+# An open Notebooks window is normally kept, so you come back to the same
+# notebook, page or half-written note. It's only closed after an update,
+# because the old window would keep running the old code.
+if [ -n "$APP_PIDS" ] && [ "$(cat "$RUN/running_version" 2>/dev/null)" != "$VERSION" ]; then
+    log "closing window from version $(cat "$RUN/running_version" 2>/dev/null) (now $VERSION)"
+    lipc-set-prop com.lab126.appmgrd stop "app://$APP_ID" >/dev/null 2>&1
     sleep 1
+
+    for PID in $APP_PIDS; do
+        kill "$PID" 2>/dev/null
+    done
 fi
 
-cp "$HELPER" "$RUN/notebooks_helper" && chmod +x "$RUN/notebooks_helper"
+echo "$VERSION" > "$RUN/running_version"
 
-(cd / && exec "$RUN/notebooks_helper" "$RUN/helper.log") &
-echo $! > "$RUN/helper.pid"
-log "helper started (pid $!)"
+# Start the helper unless the same version is already running.
+HELPER_PID="$(cat "$RUN/helper.pid" 2>/dev/null)"
+
+if [ -n "$HELPER_PID" ] && kill -0 "$HELPER_PID" 2>/dev/null &&
+    [ "$(cat "$RUN/helper_version" 2>/dev/null)" = "$VERSION" ]; then
+    log "helper already running (pid $HELPER_PID)"
+else
+    if [ -n "$HELPER_PID" ]; then
+        kill "$HELPER_PID" 2>/dev/null
+        sleep 1
+    fi
+
+    cp "$HELPER" "$RUN/notebooks_helper" && chmod +x "$RUN/notebooks_helper"
+
+    (cd / && exec "$RUN/notebooks_helper" "$RUN/helper.log") &
+    echo $! > "$RUN/helper.pid"
+    echo "$VERSION" > "$RUN/helper_version"
+    log "helper started (pid $!)"
+fi
 
 # Open the app only after this script has finished: when a Library script
 # exits, the Kindle returns to the Library, which would close an app started

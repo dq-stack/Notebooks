@@ -278,7 +278,7 @@ var NBApp = (function () {
 
     /* ----- home ----- */
 
-    function renderHome() {
+    function renderHome(keepScroll) {
         var rn = model.readingNow;
 
         $("reading").className = rn ? "reading" : "reading hidden";
@@ -313,8 +313,9 @@ var NBApp = (function () {
             list.appendChild(el("div", "empty", "Notebooks for your other books appear here once they have notes or highlights."));
         }
 
-        list.scrollTop = 0;
+        var keep = keepScroll ? list.scrollTop : 0;
         show("home");
+        list.scrollTop = keep;
         updatePager("home-list");
     }
 
@@ -580,13 +581,26 @@ var NBApp = (function () {
         }, AUTOSAVE_MS);
     }
 
-    /* Save the editor if it changed; callback(ok) when finished. */
+    var afterSave = [];
+
+    /*
+     * Save the editor if it changed; callback(ok) when finished. If a save
+     * is already running (e.g. the blur from tapping Done started one),
+     * wait for it, then save again only if the text changed meanwhile.
+     */
     function saveNow(callback) {
+        if (saving) {
+            afterSave.push(function () {
+                saveNow(callback);
+            });
+            return;
+        }
+
         var text = $("ed-text").value;
 
-        if (!editing || text === editing.savedText || saving) {
+        if (!editing || text === editing.savedText) {
             if (callback) {
-                callback(!saving);
+                callback(true);
             }
             return;
         }
@@ -604,6 +618,9 @@ var NBApp = (function () {
         saveText(editing.path, text, function (ok) {
             saving = false;
 
+            var waiting = afterSave;
+            afterSave = [];
+
             if (!editing) {
                 return;
             }
@@ -619,6 +636,10 @@ var NBApp = (function () {
 
             if (callback) {
                 callback(ok);
+            }
+
+            for (var i = 0; i < waiting.length; i++) {
+                waiting[i]();
             }
         });
     }
@@ -804,6 +825,7 @@ var NBApp = (function () {
         };
         $("ed-text").onblur = function () {
             $("editor").className = "screen";
+            flush();
         };
 
         var tools = document.querySelectorAll(".toolbar button");
@@ -828,6 +850,55 @@ var NBApp = (function () {
                 action();
             }
         };
+    }
+
+    /*
+     * Leaving the app (Home, sleep, another app): save the note now rather
+     * than after the autosave delay.
+     */
+    function flush() {
+        if (editing && saveTimer) {
+            clearTimeout(saveTimer);
+            saveTimer = null;
+            saveNow(null);
+        }
+    }
+
+    /*
+     * Coming back to an app that stayed open: fetch fresh highlights and
+     * notes and redraw the screen you were on, keeping your place. An open
+     * note is left exactly as it is.
+     */
+    var lastResume = 0;
+
+    function resume() {
+        var now = new Date().getTime();
+
+        if (!model || now - lastResume < 3000) {
+            return;
+        }
+
+        lastResume = now;
+
+        var id = send("refresh");
+
+        if (!id) {
+            return;
+        }
+
+        waitForAck(id, function () {
+            loadPages(function () {
+                if (editing) {
+                    return;
+                }
+
+                if (current) {
+                    renderNotebook(false);
+                } else {
+                    renderHome(true);
+                }
+            });
+        });
     }
 
     function configureChrome() {
@@ -861,9 +932,17 @@ var NBApp = (function () {
 
         wire();
 
+        /* Lifecycle hooks aren't documented; use every signal we might get. */
         if (window.kindle && window.kindle.appmgr) {
-            window.kindle.appmgr.ongo = configureChrome;
+            window.kindle.appmgr.ongo = function () {
+                configureChrome();
+                resume();
+            };
+            window.kindle.appmgr.onpause = flush;
         }
+
+        window.onblur = flush;
+        window.onpagehide = flush;
 
         /* The helper writes data.js as it starts; ask for a fresh copy too. */
         var id = send("refresh");

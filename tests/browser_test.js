@@ -226,8 +226,26 @@ async function main() {
     await page.waitForFunction(function () { return !document.getElementById("notebook").classList.contains("hidden"); });
     assert.strictEqual(store[saved[0]], undefined);
 
-    /* Loose notes notebook from home */
+    /* Coming back to the app keeps your place and picks up new data */
+    store["Walden/2026-10-19 080000.txt"] = "Written on the computer";
+    await page.evaluate(function () { window.kindle.appmgr.ongo(); });
+    await page.waitForFunction(function () {
+        return document.getElementById("nb-list").textContent.indexOf("Written on the computer") >= 0;
+    }, null, { timeout: 8000 });
+    assert.ok(await visible(page, "#notebook"), "still on the notebook after resuming");
+
+    /* Leaving the app mid-sentence saves straight away, not after the autosave delay */
+    await page.click("#nb-new");
+    await page.click("#ed-text");
+    await page.keyboard.type("Half a thought");
+    await page.evaluate(function () { window.kindle.appmgr.onpause(); });
+    await page.waitForFunction(function () { return document.getElementById("ed-status").textContent === "Saved"; }, null, { timeout: 2400 });
+    await page.click("#ed-done");
+    await page.waitForFunction(function () { return !document.getElementById("notebook").classList.contains("hidden"); });
+    assert.ok(Object.keys(store).some(function (k) { return store[k] === "Half a thought"; }));
     await page.click("#nb-back");
+
+    /* Loose notes notebook from home */
     await page.click("#home-list .row >> text=Loose notes");
     assert.strictEqual(await page.textContent("#nb-title"), "Loose notes");
     assert.ok(!(await visible(page, "#nb-read")));
