@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Notebooks</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="app.css">
+    <script src="lib.js"></script>
+    <script src="app.js"></script>
+</head>
+<body onload="NBApp.start()">
+
+<div id="home" class="screen">
+    <header class="bar">
+        <h1>Notebooks</h1>
+    </header>
+
+    <section id="reading" class="reading">
+        <div class="label">Reading now</div>
+        <div class="reading-row">
+            <div id="reading-cover" class="cover big"></div>
+            <div class="reading-info">
+                <div id="reading-title" class="book-title"></div>
+                <div id="reading-author" class="muted big-meta"></div>
+                <div class="progress-row">
+                    <div class="progress"><div id="reading-bar"></div></div>
+                    <div id="reading-percent" class="strong"></div>
+                </div>
+                <div id="reading-counts" class="muted"></div>
+                <div class="grow"></div>
+                <button id="reading-open" class="primary">Open notebook</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="label list-label">All notebooks</div>
+    <div id="home-list" class="pages"></div>
+
+    <footer class="bar footer">
+        <button class="pager prev" data-pager="home-list">&lsaquo;</button>
+        <div id="home-list-page" class="page-num"></div>
+        <button class="pager next" data-pager="home-list">&rsaquo;</button>
+    </footer>
+</div>
+
+<div id="notebook" class="screen hidden">
+    <header class="bar">
+        <button id="nb-back" class="link">&lsaquo; Notebooks</button>
+        <div class="grow"></div>
+        <button id="nb-read" class="secondary">Read book</button>
+    </header>
+
+    <div class="nb-head">
+        <div id="nb-cover" class="cover mid"></div>
+        <div>
+            <div id="nb-title" class="book-title"></div>
+            <div id="nb-meta" class="muted big-meta"></div>
+        </div>
+    </div>
+
+    <div class="tabs">
+        <button data-tab="all" class="tab">All</button>
+        <button data-tab="notes" class="tab"></button>
+        <button data-tab="highlights" class="tab"></button>
+    </div>
+
+    <div id="nb-list" class="pages"></div>
+
+    <footer class="bar footer">
+        <button id="nb-new" class="primary">+ New note</button>
+        <button class="pager prev" data-pager="nb-list">&lsaquo;</button>
+        <div id="nb-list-page" class="page-num"></div>
+        <button class="pager next" data-pager="nb-list">&rsaquo;</button>
+    </footer>
+</div>
+
+<div id="editor" class="screen hidden">
+    <header class="bar editor-bar">
+        <button id="ed-done" class="primary small">Done</button>
+        <div class="ed-titles">
+            <div id="ed-title" class="ed-book"></div>
+            <div id="ed-meta" class="muted"></div>
+        </div>
+        <div id="ed-status" class="status"></div>
+    </header>
+
+    <label for="ed-text" class="sr-only">Note text</label>
+    <textarea id="ed-text"></textarea>
+
+    <div class="toolbar">
+        <button id="tb-bullet" class="icon" aria-label="Bullet list">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="4.5" cy="6" r="1.4"/><circle cx="4.5" cy="12" r="1.4"/><circle cx="4.5" cy="18" r="1.4"/><path d="M9 6h12M9 12h12M9 18h12"/></svg>
+        </button>
+        <button id="tb-number" class="icon" aria-label="Numbered list">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12"/><path class="thin" d="M3.5 4.5l1.2-.8v4.3M3.3 10.6c.4-.6 2.4-.7 2.2.6-.1.7-2.2 1.9-2.2 2.6h2.4M3.3 16.2h2.1l-1.2 1.4c1 0 1.6.4 1.4 1.2-.2.9-1.7 1-2.3.4"/></svg>
+        </button>
+        <button id="tb-check" class="icon" aria-label="Checklist">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="3.5" width="6" height="6" rx="1"/><path d="M3.8 6.6l1.5 1.5 2.6-3"/><rect x="2.5" y="14.5" width="6" height="6" rx="1"/><path d="M12 6.5h9M12 17.5h9"/></svg>
+        </button>
+        <div class="divider"></div>
+        <button id="tb-smaller" class="icon text-icon small-a" aria-label="Smaller text">A&darr;</button>
+        <button id="tb-larger" class="icon text-icon big-a" aria-label="Larger text">A&uarr;</button>
+        <div class="grow"></div>
+        <button id="tb-delete" class="icon" aria-label="Delete note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+        </button>
+    </div>
+</div>
+
+<div id="modal" class="modal hidden">
+    <div class="modal-box">
+        <p id="modal-text"></p>
+        <div class="modal-buttons">
+            <button id="modal-cancel" class="secondary">Cancel</button>
+            <button id="modal-ok" class="primary">Delete</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+</body>
+</html>

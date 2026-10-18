@@ -1,0 +1,131 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Helper core tests
+        run: ./tests/run_core_tests.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: App logic tests
+        run: node tests/test_lib.js
+
+      - name: App scripts are ES5 (Kindle WebKit)
+        run: |
+          npm install --no-save acorn@8.12.1
+          for f in app/*.js; do
+            node -e 'require("acorn").parse(require("fs").readFileSync(process.argv[1], "utf8"), {ecmaVersion: 5})' "$f"
+            echo "ES5 ok: $f"
+          done
+
+  build:
+    name: Helper for ${{ matrix.target }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: kindlehf
+            triplet: arm-kindlehf-linux-gnueabihf
+            toolchain_sha256: d08d3a5cbbaa184cc0cc2279df1d64a71656ab2c1e0223cae324b8d30c8d73e0
+            helper_name: notebooks_helper_hf
+          # Soft-float build for older firmware (e.g. Paperwhite 2 on 5.12.x).
+          - target: kindlepw2
+            triplet: arm-kindlepw2-linux-gnueabi
+            toolchain_sha256: ecefcab5ecdedc4e0255440d2aae36dda1efe36ef16bc6934c4633b2be5e69e5
+            helper_name: notebooks_helper
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-dev nettle-dev meson ninja-build pkg-config
+
+      - name: Install ${{ matrix.target }} toolchain
+        run: |
+          wget -O "$RUNNER_TEMP/tc.tar.gz" \
+            "https://github.com/KindleModding/koxtoolchain/releases/download/2026.04/${{ matrix.target }}.tar.gz"
+          echo "${{ matrix.toolchain_sha256 }}  $RUNNER_TEMP/tc.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/tc.tar.gz" -C "$HOME"
+
+      - name: Set up Kindle SDK
+        run: |
+          git clone --recursive --depth=1 https://github.com/KindleModding/kindle-sdk.git "$RUNNER_TEMP/kindle-sdk"
+          cd "$RUNNER_TEMP/kindle-sdk"
+          chmod +x ./gen-sdk.sh
+          ./gen-sdk.sh ${{ matrix.target }}
+
+      - name: Compile
+        run: |
+          meson setup --cross-file "$HOME/x-tools/${{ matrix.triplet }}/meson-crosscompile.txt" build
+          meson compile -C build
+          mkdir -p dist
+          cp build/src/helper/notebooks_helper "dist/${{ matrix.helper_name }}"
+          "$HOME/x-tools/${{ matrix.triplet }}/bin/${{ matrix.triplet }}-strip" "dist/${{ matrix.helper_name }}"
+          file "dist/${{ matrix.helper_name }}"
+          readelf -d "dist/${{ matrix.helper_name }}" | grep NEEDED || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-${{ matrix.target }}
+          path: dist/${{ matrix.helper_name }}
+
+  package:
+    name: Package
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build ZIP
+        run: ./scripts/package-zip.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notebooks-zip
+          path: release/*.zip
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/*.zip \
+            --title "Notebooks $GITHUB_REF_NAME" \
+            --notes-file ".github/release-notes/$GITHUB_REF_NAME.md"
