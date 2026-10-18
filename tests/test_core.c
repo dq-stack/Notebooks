@@ -68,7 +68,7 @@ static void test_files(void) {
     char root[] = "/tmp/nb_test_XXXXXX";
     CHECK(mkdtemp(root) != NULL);
 
-    char dir[256], path[256];
+    char dir[256], path[320];
     snprintf(dir, sizeof dir, "%s/Walden", root);
     snprintf(path, sizeof path, "%s/a.txt", dir);
     CHECK(mkdir(dir, 0755) == 0);
@@ -76,7 +76,7 @@ static void test_files(void) {
     CHECK(write_file_atomic(dir, path, "first", 5) == 0);
     CHECK(write_file_atomic(dir, path, "line \"2\"\n", 9) == 0);
 
-    char junk[256];
+    char junk[320];
     snprintf(junk, sizeof junk, "%s/.a.txt.swp", dir);
     FILE *f = fopen(junk, "w");
     fputs("ignored", f);
@@ -89,7 +89,7 @@ static void test_files(void) {
     CHECK(strstr(b.data, "ignored") == NULL);
     buf_free(&b);
 
-    char tmp[300];
+    char tmp[400];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     CHECK(access(tmp, F_OK) != 0);
 
