@@ -13,7 +13,8 @@ var NBApp = (function () {
     var HELPER = "com.dqstack.notebooks.helper";
     var DATA_URL = window.NB_DATA_URL || "file:///tmp/notebooks/data.js";
     var PAGES_URL = window.NB_PAGES_URL || "file:///tmp/notebooks/pages.js";
-    var AUTOSAVE_MS = 2500;
+    var STATE_URL = window.NB_STATE_URL || "file:///tmp/notebooks/state.js";
+    var AUTOSAVE_MS = 1500;
     var ACK_TIMEOUT_MS = 8000;
     var PING_MS = 60000;
     var FONT_SIZES = [20, 23, 26, 30, 34];
@@ -121,6 +122,38 @@ var NBApp = (function () {
         return id;
     }
 
+    /*
+     * Remember where you are. The helper closes Notebooks as soon as you
+     * leave it (to free memory), and start() puts you back here.
+     */
+    function rememberPlace() {
+        var place = { screen: editing ? "editor" : current ? "notebook" : "home" };
+
+        if (current) {
+            place.notebook = current.name;
+            place.tab = tab;
+            place.scroll = $("nb-list").scrollTop;
+        } else {
+            place.scroll = $("home-list").scrollTop;
+        }
+
+        if (editing && !editing.isNew) {
+            place.note = editing.path;
+        }
+
+        send("state", JSON.stringify(place));
+    }
+
+    function loadScript(url, callback) {
+        var s = document.createElement("script");
+        s.charset = "utf-8";
+        s.src = url + "?t=" + new Date().getTime();
+        s.onload = s.onerror = function () {
+            callback();
+        };
+        document.getElementsByTagName("head")[0].appendChild(s);
+    }
+
     function loadPages(callback) {
         var s = document.createElement("script");
         s.charset = "utf-8";
@@ -223,6 +256,7 @@ var NBApp = (function () {
         var list = $(listId);
         list.scrollTop = Math.max(0, list.scrollTop + dir * list.clientHeight);
         updatePager(listId);
+        rememberPlace();
     }
 
 
@@ -317,6 +351,7 @@ var NBApp = (function () {
         show("home");
         list.scrollTop = keep;
         updatePager("home-list");
+        rememberPlace();
     }
 
     function homeRow(nb) {
@@ -408,6 +443,7 @@ var NBApp = (function () {
         show("notebook");
         list.scrollTop = keep;
         updatePager("nb-list");
+        rememberPlace();
     }
 
     function entryHead(left, right) {
@@ -568,6 +604,7 @@ var NBApp = (function () {
         applyFont();
         show("editor");
         $("ed-text").focus();
+        rememberPlace();
     }
 
     function scheduleSave() {
@@ -626,8 +663,14 @@ var NBApp = (function () {
             }
 
             if (ok) {
+                var wasNew = editing.isNew;
                 editing.savedText = text;
                 editing.isNew = false;
+
+                if (wasNew) {
+                    rememberPlace();    /* the note now exists, so reopening can return to it */
+                }
+
                 $("tb-delete").style.visibility = "visible";
                 setStatus($("ed-text").value === text ? "Saved" : "");
             } else {
@@ -919,6 +962,43 @@ var NBApp = (function () {
         }
     }
 
+    /* Back to where you were when Notebooks was last closed (see rememberPlace). */
+    function restorePlace() {
+        var place = window.NB_STATE;
+        var nb = place && place.notebook ? findNotebook(place.notebook) : null;
+
+        if (!nb) {
+            renderHome(false);
+
+            if (place && place.screen === "home" && place.scroll) {
+                $("home-list").scrollTop = place.scroll;
+                updatePager("home-list");
+            }
+
+            return;
+        }
+
+        current = nb;
+        tab = place.tab === "notes" || place.tab === "highlights" ? place.tab : "all";
+        renderNotebook(true);
+
+        if (place.scroll) {
+            $("nb-list").scrollTop = place.scroll;
+            updatePager("nb-list");
+        }
+
+        if (place.screen === "editor" && place.note) {
+            for (var i = 0; i < nb.notes.length; i++) {
+                if (nb.notes[i].path === place.note) {
+                    openEditor(nb.notes[i]);
+                    return;
+                }
+            }
+        }
+
+        rememberPlace();
+    }
+
     function start() {
         try {
             var saved = parseInt(window.localStorage.getItem("nb-font"), 10);
@@ -952,7 +1032,9 @@ var NBApp = (function () {
             loadData(function (d) {
                 if (d && (!id || (d.acks && d.acks[id] !== undefined) || new Date().getTime() - started > 4000)) {
                     setData(d);
-                    loadPages(renderHome);
+                    loadPages(function () {
+                        loadScript(STATE_URL, restorePlace);
+                    });
                 } else if (new Date().getTime() - started > 15000) {
                     $("home-list").innerHTML = "";
                     $("home-list").appendChild(el("div", "empty",

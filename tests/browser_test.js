@@ -56,6 +56,7 @@ var store = {
 var acks = {};
 var opened = [];
 var failSaves = false;
+var savedState = null;
 
 function dataJs() {
     var notes = Object.keys(store).map(function (p) {
@@ -85,6 +86,9 @@ function helper(prop, msg) {
         delete store[args];
     } else if (prop === "open") {
         opened.push(args);
+    } else if (prop === "state") {
+        savedState = args;
+        return;
     }
 
     if (prop !== "ping") {
@@ -100,6 +104,11 @@ function serve() {
             if (url === "/pages.js") {
                 res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
                 return res.end("window.NB_PAGES=" + JSON.stringify({ "/mnt/us/documents/Walden.azw3": { step: 1500, count: 500 } }) + ";");
+            }
+
+            if (url === "/state.js") {
+                res.writeHead(savedState ? 200 : 404, { "Content-Type": "application/javascript; charset=utf-8" });
+                return res.end(savedState ? "window.NB_STATE=" + savedState + ";" : "");
             }
 
             if (url === "/data.js") {
@@ -146,6 +155,7 @@ async function main() {
     await page.addInitScript(function () {
         window.NB_DATA_URL = "/data.js";
         window.NB_PAGES_URL = "/pages.js";
+        window.NB_STATE_URL = "/state.js";
         window.kindle = {
             messaging: {
                 sendStringMessage: function (app, prop, msg) { window.__helper(prop, msg); },
@@ -250,6 +260,21 @@ async function main() {
     assert.strictEqual(await page.textContent("#nb-title"), "Loose notes");
     assert.ok(!(await visible(page, "#nb-read")));
     await shot(page, "4-loose");
+
+    /* Closed when you leave, reopened: back in the same notebook and note */
+    await page.click("#nb-back");
+    await page.click("#reading-open");
+    await page.click("#nb-list .entry-head >> nth=0");
+    var openNote = await page.inputValue("#ed-text");
+    await page.reload();
+    await page.waitForFunction(function () { return !document.getElementById("editor").classList.contains("hidden"); }, null, { timeout: 8000 });
+    assert.strictEqual(await page.inputValue("#ed-text"), openNote);
+    assert.strictEqual(await page.textContent("#ed-title"), "Walden");
+    await page.click("#ed-done");
+    await page.waitForFunction(function () { return !document.getElementById("notebook").classList.contains("hidden"); });
+    await page.reload();
+    await page.waitForFunction(function () { return document.getElementById("nb-title").textContent === "Walden" &&
+        !document.getElementById("notebook").classList.contains("hidden"); }, null, { timeout: 8000 });
 
     assert.deepStrictEqual(errors, []);
     await browser.close();

@@ -8,6 +8,7 @@
  *   remove   "<id>\n<notebook>/<note>.txt"
  *   refresh  "<id>"
  *   open     "<id>\n/mnt/us/documents/<book file>"
+ *   state    "<id>\n<JSON>" where you are in the app (written to state.js)
  *   ping     anything (keeps the helper alive while the app is open)
  *
  * After every request the helper rewrites /tmp/notebooks/data.js with the
@@ -17,10 +18,16 @@
  *
  * Nothing here runs a shell with page-supplied text: note paths are checked
  * by valid_note_path() and book paths must be existing files in documents/.
+ *
+ * The helper also closes the app once you leave it. A Paperwhite 2 has
+ * 256 MB of RAM, and a mesquite window left loaded in the background made
+ * other apps swap until the Kindle crashed. The page saves where you were
+ * (state.js) so reopening still lands in the same place.
  */
 
 #include "nb_core.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <lipc.h>
 #include <signal.h>
@@ -39,6 +46,10 @@
 #define DATA_DIR "/tmp/notebooks"
 #define DATA_FILE DATA_DIR "/data.js"
 #define PAGES_FILE DATA_DIR "/pages.js"
+#define STATE_FILE DATA_DIR "/state.js"
+#define APP_ID "com.dqstack.notebooks"
+#define LEAVE_GRACE_SECONDS 3
+#define START_TIMEOUT_SECONDS 90
 #define CLIPPINGS "/mnt/us/documents/My Clippings.txt"
 #define DOCUMENTS "/mnt/us/documents/"
 #define IDLE_EXIT_SECONDS (15 * 60)
@@ -368,6 +379,80 @@ static const char *do_open(const char *book) {
 }
 
 
+static const char *do_state(const char *json) {
+    struct buf b = {0};
+    size_t n = strlen(json);
+
+    if (n == 0 || n > 8192 || json[0] != '{') {
+        return "error: bad state";
+    }
+
+    int rc = buf_puts(&b, "window.NB_STATE=");
+    rc |= buf_append(&b, json, n);
+    rc |= buf_puts(&b, ";\n");
+
+    if (rc != 0 || write_file_atomic(DATA_DIR, STATE_FILE, b.data, b.len) != 0) {
+        buf_free(&b);
+        return "error: could not write state";
+    }
+
+    buf_free(&b);
+    return "ok";
+}
+
+
+/* Kill the mesquite process showing Notebooks ("mesquite -l com.dqstack.notebooks ..."). */
+static void close_app_window(void) {
+    static const char want[] = "-l\0" APP_ID;
+    DIR *proc = opendir("/proc");
+    struct dirent *e;
+
+    if (!proc) {
+        return;
+    }
+
+    while ((e = readdir(proc)) != NULL) {
+        if (e->d_name[0] < '1' || e->d_name[0] > '9') {
+            continue;
+        }
+
+        char path[64];
+        struct buf cmd = {0};
+
+        snprintf(path, sizeof path, "/proc/%s/cmdline", e->d_name);
+
+        /* cmdline is NUL-separated: look for mesquite with argv "-l" then our id */
+        if (read_file(path, 4096, &cmd) == 0 && cmd.len && strstr(cmd.data, "mesquite")) {
+            for (size_t i = 0; i + sizeof want - 1 <= cmd.len; i++) {
+                if (memcmp(cmd.data + i, want, sizeof want - 1) == 0) {
+                    log_msg("closing app window (pid %s)", e->d_name);
+                    kill((pid_t)atoi(e->d_name), SIGTERM);
+                    break;
+                }
+            }
+        }
+
+        buf_free(&cmd);
+    }
+
+    closedir(proc);
+}
+
+
+/* Is Notebooks the app in front? -1 if appmgrd couldn't be asked. */
+static int app_in_front(LIPC *query) {
+    char *active = NULL;
+
+    if (!query || LipcGetStringProperty(query, "com.lab126.appmgrd", "activeApp", &active) != LIPC_OK || !active) {
+        return -1;
+    }
+
+    int front = strcmp(active, APP_ID) == 0;
+    LipcFreeString(active);
+    return front;
+}
+
+
 static LIPCcode on_request(LIPC *lipc, const char *property, void *value, void *data) {
     (void)lipc;
     (void)data;
@@ -390,6 +475,10 @@ static LIPCcode on_request(LIPC *lipc, const char *property, void *value, void *
         result = do_remove(args);
     } else if (strcmp(property, "open") == 0) {
         result = do_open(args);
+    } else if (strcmp(property, "state") == 0) {
+        do_state(args);
+        free(msg);
+        return LIPC_OK;     /* no ack needed, and no data.js rebuild */
     }
 
     if (strcmp(property, "refresh") == 0) {
@@ -424,7 +513,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const char *props[] = {"save", "remove", "refresh", "open", "ping"};
+    const char *props[] = {"save", "remove", "refresh", "open", "state", "ping"};
 
     for (size_t i = 0; i < sizeof props / sizeof props[0]; i++) {
         if (LipcRegisterStringProperty(lipc, props[i], NULL, on_request, NULL) != LIPC_OK) {
@@ -439,12 +528,51 @@ int main(int argc, char **argv) {
     write_data();
     log_msg("ready (pid %d)", (int)getpid());
 
-    /* LIPC callbacks run on the library's own thread; we only watch for idle. */
-    while (keep_running && time(NULL) - last_activity < IDLE_EXIT_SECONDS) {
-        sleep(1);
+    /*
+     * LIPC callbacks run on the library's own thread. This loop watches,
+     * on a separate connection, which app is in front: once Notebooks has
+     * been shown and then left for LEAVE_GRACE_SECONDS, close its window
+     * and exit, so nothing heavy stays loaded.
+     */
+    LIPC *query = LipcOpenNoName();
+    time_t started = time(NULL);
+    time_t left_at = 0;
+    int seen = 0;
+    const char *why = "signal";
+
+    while (keep_running) {
+        sleep(2);
+
+        int front = app_in_front(query);
+
+        if (front == 1) {
+            seen = 1;
+            left_at = 0;
+        } else if (front == 0 && seen) {
+            if (!left_at) {
+                left_at = time(NULL);
+            } else if (time(NULL) - left_at >= LEAVE_GRACE_SECONDS) {
+                close_app_window();
+                why = "app left";
+                break;
+            }
+        } else if (front == 0 && time(NULL) - started > START_TIMEOUT_SECONDS) {
+            why = "app never opened";
+            break;
+        }
+
+        if (time(NULL) - last_activity >= IDLE_EXIT_SECONDS) {
+            why = "idle";
+            break;
+        }
     }
 
-    log_msg("exiting (%s)", keep_running ? "idle" : "signal");
+    log_msg("exiting (%s)", why);
+
+    if (query) {
+        LipcClose(query);
+    }
+
     LipcClose(lipc);
     return 0;
 }

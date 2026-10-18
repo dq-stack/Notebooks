@@ -56,7 +56,8 @@ Delete `documents/Notebooks.sh` and `extensions/notebooks/`. Keep `/notebooks/` 
 - The app is a web page run by the Kindle's built-in `mesquite` browser engine.
 - A small native helper (`notebooks_helper`, C) does the file work. The page sends it requests over LIPC; it can only save or delete `.txt` files inside `/mnt/us/notebooks/`, refresh the data, and open a book from `documents/`. It never runs a shell with anything the page sends.
 - After every change the helper rewrites `/tmp/notebooks/data.js` (library from the Kindle's database, `My Clippings.txt`, all notes, and an acknowledgement for the request). The page reloads it and compares the saved text with what you typed.
-- The helper runs from a copy in `/tmp`, so plugging in over USB can't leave it holding files open, and it exits after 15 minutes without the app.
+- **Nothing stays running in the background.** Once you leave Notebooks (Home, another app, Read book) the helper closes the app's window and exits: on a 256 MB Paperwhite 2 a browser window left loaded can starve other apps of memory. Your place (notebook, page, open note) is kept in `/tmp/notebooks/state.js`, so reopening lands where you left off.
+- The helper runs from a copy in `/tmp`, so plugging in over USB can't leave it holding files open.
 
 ## Building
 
