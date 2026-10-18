@@ -97,6 +97,11 @@ function serve() {
         var server = http.createServer(function (req, res) {
             var url = req.url.split("?")[0];
 
+            if (url === "/pages.js") {
+                res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+                return res.end("window.NB_PAGES=" + JSON.stringify({ "/mnt/us/documents/Walden.azw3": { step: 1500, count: 500 } }) + ";");
+            }
+
             if (url === "/data.js") {
                 res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
                 return res.end(dataJs());
@@ -140,6 +145,7 @@ async function main() {
     await page.exposeFunction("__helper", helper);
     await page.addInitScript(function () {
         window.NB_DATA_URL = "/data.js";
+        window.NB_PAGES_URL = "/pages.js";
         window.kindle = {
             messaging: {
                 sendStringMessage: function (app, prop, msg) { window.__helper(prop, msg); },
@@ -162,7 +168,7 @@ async function main() {
     await page.click("#reading-open");
     assert.ok(await visible(page, "#notebook"));
     var heads = await page.$$eval("#nb-list .entry-head span:first-child", function (n) { return n.map(function (e) { return e.textContent; }); });
-    assert.deepStrictEqual(heads, ["Your note", "Highlight · Location 1095", "Kindle note · Location 1308"]);
+    assert.deepStrictEqual(heads, ["Your note", "Highlight · Page 110", "Kindle note · Page 131"]);
     await shot(page, "2-notebook");
 
     await page.click('[data-tab="highlights"]');
@@ -178,6 +184,7 @@ async function main() {
     await page.click("#nb-new");
     assert.ok(await visible(page, "#editor"));
     await page.click("#ed-text");
+    assert.strictEqual(await page.$eval("#editor .toolbar", function (e) { return getComputedStyle(e).bottom; }), "351px");
     await page.keyboard.type("Experiments");
     await page.keyboard.press("Enter");
     await page.click("#tb-check");

@@ -418,3 +418,75 @@ int url_encode_path(const char *in, char *out, size_t out_size) {
     out[o] = '\0';
     return 0;
 }
+
+
+/*
+ * Read the page table from an APNX file (the page numbers calibre and the
+ * Kindle store make). Entries are text positions where each page starts;
+ * Kindle location L covers positions from (L - 1) * 150.
+ *
+ * Appends either {"step":N,"count":M} when pages are evenly spaced (what
+ * calibre writes) or the full list [p0,p1,...]. Returns -1 if the file
+ * isn't a page table we understand.
+ */
+static unsigned int be16(const unsigned char *p) {
+    return (unsigned int)p[0] << 8 | p[1];
+}
+
+static unsigned long be32(const unsigned char *p) {
+    return (unsigned long)p[0] << 24 | (unsigned long)p[1] << 16 | (unsigned long)p[2] << 8 | p[3];
+}
+
+int append_apnx_json(struct buf *b, const char *data, size_t n) {
+    const unsigned char *d = (const unsigned char *)data;
+
+    if (n < 12) {
+        return -1;
+    }
+
+    unsigned long off = be32(d + 4);
+
+    if (off + 8 > n) {
+        return -1;
+    }
+
+    unsigned int header_len = be16(d + off + 2);
+    unsigned int count = be16(d + off + 4);
+    unsigned int bits = be16(d + off + 6);
+    unsigned long start = off + 8 + header_len;
+
+    if (bits != 32 || count == 0 || start + 4UL * count > n) {
+        return -1;
+    }
+
+    const unsigned char *pages = d + start;
+    unsigned long step = count > 1 ? be32(pages + 4) - be32(pages) : 0;
+    int even = be32(pages) == 0 && step > 0;
+
+    for (unsigned int i = 1; even && i < count; i++) {
+        if (be32(pages + 4 * i) != step * i) {
+            even = 0;
+        }
+    }
+
+    char num[48];
+
+    if (even) {
+        snprintf(num, sizeof num, "{\"step\":%lu,\"count\":%u}", step, count);
+        return buf_puts(b, num);
+    }
+
+    if (buf_puts(b, "[") != 0) {
+        return -1;
+    }
+
+    for (unsigned int i = 0; i < count; i++) {
+        snprintf(num, sizeof num, i ? ",%lu" : "%lu", be32(pages + 4 * i));
+
+        if (buf_puts(b, num) != 0) {
+            return -1;
+        }
+    }
+
+    return buf_puts(b, "]");
+}

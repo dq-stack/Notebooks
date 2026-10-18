@@ -12,6 +12,7 @@ var NBApp = (function () {
     var APP_ID = "com.dqstack.notebooks";
     var HELPER = "com.dqstack.notebooks.helper";
     var DATA_URL = window.NB_DATA_URL || "file:///tmp/notebooks/data.js";
+    var PAGES_URL = window.NB_PAGES_URL || "file:///tmp/notebooks/pages.js";
     var AUTOSAVE_MS = 2500;
     var ACK_TIMEOUT_MS = 8000;
     var PING_MS = 60000;
@@ -38,7 +39,13 @@ var NBApp = (function () {
         var screens = ["home", "notebook", "editor"];
 
         for (var i = 0; i < screens.length; i++) {
-            $(screens[i]).className = "screen" + (screens[i] === id ? "" : " hidden");
+            var cls = $(screens[i]).className;
+
+            if (screens[i] === id) {
+                $(screens[i]).className = cls.replace(/\s*hidden/g, "");
+            } else if (cls.indexOf("hidden") < 0) {
+                $(screens[i]).className = cls + " hidden";
+            }
         }
     }
 
@@ -112,6 +119,16 @@ var NBApp = (function () {
         }
 
         return id;
+    }
+
+    function loadPages(callback) {
+        var s = document.createElement("script");
+        s.charset = "utf-8";
+        s.src = PAGES_URL + "?t=" + new Date().getTime();
+        s.onload = s.onerror = function () {
+            callback();
+        };
+        document.getElementsByTagName("head")[0].appendChild(s);
     }
 
     function loadData(callback) {
@@ -399,12 +416,20 @@ var NBApp = (function () {
         return head;
     }
 
+    /* Page as the Kindle recorded it, else worked out from the book's APNX, else the location. */
     function where(item) {
-        if (item.locStart !== null) {
-            return "Location " + item.locStart;
+        if (item.page !== null) {
+            return "Page " + item.page;
         }
 
-        return item.page !== null ? "Page " + item.page : "";
+        var table = current && current.book && window.NB_PAGES ? window.NB_PAGES[current.book.path] : null;
+        var page = NB.pageFor(table, item.locStart);
+
+        if (page) {
+            return "Page " + page;
+        }
+
+        return item.locStart !== null ? "Location " + item.locStart : "";
     }
 
     function entryNode(item) {
@@ -767,6 +792,27 @@ var NBApp = (function () {
 
         $("ed-done").onclick = done;
         $("ed-text").oninput = onInput;
+
+        /*
+         * The Kindle keyboard covers the bottom of the screen without
+         * resizing the app, so lift the toolbar above it while typing.
+         * Toolbar taps must not blur the text (that would drop it again
+         * mid-tap), hence preventDefault on mousedown.
+         */
+        $("ed-text").onfocus = function () {
+            $("editor").className = "screen keyboard";
+        };
+        $("ed-text").onblur = function () {
+            $("editor").className = "screen";
+        };
+
+        var tools = document.querySelectorAll(".toolbar button");
+
+        for (i = 0; i < tools.length; i++) {
+            tools[i].onmousedown = function (e) {
+                e.preventDefault();
+            };
+        }
         $("tb-bullet").onclick = function () { applyList("bullet"); };
         $("tb-number").onclick = function () { applyList("number"); };
         $("tb-check").onclick = function () { applyList("check"); };
@@ -827,7 +873,7 @@ var NBApp = (function () {
             loadData(function (d) {
                 if (d && (!id || (d.acks && d.acks[id] !== undefined) || new Date().getTime() - started > 4000)) {
                     setData(d);
-                    renderHome();
+                    loadPages(renderHome);
                 } else if (new Date().getTime() - started > 15000) {
                     $("home-list").innerHTML = "";
                     $("home-list").appendChild(el("div", "empty",

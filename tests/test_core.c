@@ -112,7 +112,37 @@ static void test_url(void) {
     CHECK(url_encode_path("/aaaa", out, 4) != 0);
 }
 
+static void put32(unsigned char *p, unsigned long v) {
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v;
+}
+
+static void test_apnx(void) {
+    /* version, page-header offset (12 + 2 byte content header), content header len, "{}" */
+    unsigned char f[64] = {0};
+    struct buf b = {0};
+
+    put32(f, 0x00010001); put32(f + 4, 14); put32(f + 8, 2);
+    f[12] = '{'; f[13] = '}';
+    f[14] = 0; f[15] = 1;      /* unknown */
+    f[16] = 0; f[17] = 0;      /* page header length */
+    f[18] = 0; f[19] = 3;      /* 3 pages */
+    f[20] = 0; f[21] = 32;     /* 32-bit entries */
+    put32(f + 22, 0); put32(f + 26, 2300); put32(f + 30, 4600);
+
+    CHECK(append_apnx_json(&b, (char *)f, 34) == 0 && strcmp(b.data, "{\"step\":2300,\"count\":3}") == 0);
+    buf_free(&b);
+
+    put32(f + 30, 5000);
+    CHECK(append_apnx_json(&b, (char *)f, 34) == 0 && strcmp(b.data, "[0,2300,5000]") == 0);
+    buf_free(&b);
+
+    CHECK(append_apnx_json(&b, (char *)f, 30) != 0); /* truncated */
+    buf_free(&b);
+}
+
 int main(void) {
+    test_apnx();
     test_url();
     test_paths();
     test_base64();

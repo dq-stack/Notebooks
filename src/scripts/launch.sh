@@ -51,11 +51,13 @@ cp "$HELPER" "$RUN/notebooks_helper" && chmod +x "$RUN/notebooks_helper"
 echo $! > "$RUN/helper.pid"
 log "helper started (pid $!)"
 
-# Give it a moment to write the first data.js, then open the app.
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [ -f "$RUN/data.js" ] && break
-    sleep 0.3
-done
+# Open the app only after this script has finished: when a Library script
+# exits, the Kindle returns to the Library, which would close an app started
+# while the script was still running (the "flash and nothing" on launch).
+(
+    sleep 2
+    lipc-set-prop com.lab126.appmgrd start "app://$APP_ID"
+    log "app started"
+) </dev/null >/dev/null 2>&1 &
 
-lipc-set-prop com.lab126.appmgrd start "app://$APP_ID"
-log "app started"
+log "launcher done"

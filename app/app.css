@@ -92,9 +92,9 @@ h1 {
 #home .pager.prev { left: 40px; }
 #home .pager.next { right: 40px; }
 #home .page-num { left: 110px; right: 110px; }
-#nb-new { position: absolute; left: 40px; right: 250px; top: 14px; height: 62px; font-size: 22px; }
-#notebook .pager.prev { right: 194px; }
-#notebook .page-num { right: 104px; width: 84px; }
+#nb-new { position: absolute; left: 40px; right: 316px; top: 14px; height: 62px; font-size: 22px; }
+#notebook .pager.prev { right: 244px; }
+#notebook .page-num { right: 104px; width: 132px; font-size: 17px; }
 #notebook .pager.next { right: 40px; }
 
 /* ----- covers ----- */
@@ -261,9 +261,14 @@ svg .thin { stroke-width: 1.4; }
     -webkit-user-select: text;
 }
 
+/* While typing: the Kindle keyboard (with its suggestion row) covers the bottom 351px. */
+#editor.keyboard .toolbar { bottom: 351px; }
+#editor.keyboard #ed-text { bottom: 429px; }
+
 .toolbar {
     position: absolute;
     left: 0; right: 0; bottom: 0;
+    background: #FFFFFF;
     height: 78px;
     box-sizing: border-box;
     padding: 10px 32px;

@@ -24,5 +24,6 @@ int read_file(const char *path, size_t limit, struct buf *out);
 int write_file_atomic(const char *dir, const char *path, const char *data, size_t n);
 int append_notes_json(struct buf *b, const char *root);
 int url_encode_path(const char *in, char *out, size_t out_size);
+int append_apnx_json(struct buf *b, const char *data, size_t n);
 
 #endif

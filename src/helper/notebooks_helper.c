@@ -38,6 +38,7 @@
 #define NOTES_ROOT "/mnt/us/notebooks"
 #define DATA_DIR "/tmp/notebooks"
 #define DATA_FILE DATA_DIR "/data.js"
+#define PAGES_FILE DATA_DIR "/pages.js"
 #define CLIPPINGS "/mnt/us/documents/My Clippings.txt"
 #define DOCUMENTS "/mnt/us/documents/"
 #define IDLE_EXIT_SECONDS (15 * 60)
@@ -98,8 +99,7 @@ static void remember_ack(const char *id, const char *result) {
 }
 
 
-static int append_command_output(struct buf *b, const char *cmd) {
-    struct buf out = {0};
+static void run_command(const char *cmd, struct buf *out) {
     FILE *p = popen(cmd, "r");
 
     if (p) {
@@ -107,15 +107,95 @@ static int append_command_output(struct buf *b, const char *cmd) {
         size_t n;
 
         while ((n = fread(chunk, 1, sizeof chunk, p)) > 0) {
-            buf_append(&out, chunk, n);
+            buf_append(out, chunk, n);
         }
 
         pclose(p);
     }
+}
+
+static int append_command_output(struct buf *b, const char *cmd) {
+    struct buf out = {0};
+    run_command(cmd, &out);
 
     int rc = json_append_string(b, out.data ? out.data : "", out.len);
     buf_free(&out);
     return rc;
+}
+
+
+/*
+ * Page tables for every book that has an APNX file, either next to the book
+ * (calibre over USB) or inside its .sdr folder. Written to pages.js only at
+ * start-up and on refresh: they don't change when notes are saved.
+ */
+static void write_pages(void) {
+    struct buf lib = {0};
+    struct buf b = {0};
+    int first = 1;
+
+    run_command(LIBRARY_CMD, &lib);
+    int rc = buf_puts(&b, "window.NB_PAGES={");
+
+    for (char *line = lib.data; line && *line; ) {
+        char *end = strchr(line, '\n');
+        char *sep = strchr(line, '\x1f');
+
+        if (end) {
+            *end = '\0';
+        }
+
+        if (sep && (!end || sep < end)) {
+            *sep = '\0';
+
+            const char *book = line;
+            const char *dot = strrchr(book, '.');
+            const char *name = strrchr(book, '/');
+            char cand[2][2048];
+
+            if (dot && name && dot > name) {
+                int base = (int)(dot - book);
+                int stem = (int)(dot - name - 1);
+
+                snprintf(cand[0], sizeof cand[0], "%.*s.apnx", base, book);
+                snprintf(cand[1], sizeof cand[1], "%.*s.sdr/%.*s.apnx", base, book, stem, name + 1);
+
+                for (int i = 0; i < 2; i++) {
+                    struct buf apnx = {0};
+
+                    if (read_file(cand[i], 4 * 1024 * 1024, &apnx) == 0 && apnx.len) {
+                        size_t mark = b.len;
+
+                        rc |= buf_puts(&b, first ? "" : ",");
+                        rc |= json_append_string(&b, book, strlen(book));
+                        rc |= buf_puts(&b, ":");
+
+                        if (append_apnx_json(&b, apnx.data, apnx.len) == 0) {
+                            first = 0;
+                            buf_free(&apnx);
+                            break;
+                        }
+
+                        b.len = mark; /* not a page table we understand */
+                        b.data[mark] = '\0';
+                    }
+
+                    buf_free(&apnx);
+                }
+            }
+        }
+
+        line = end ? end + 1 : NULL;
+    }
+
+    rc |= buf_puts(&b, "};\n");
+
+    if (rc != 0 || write_file_atomic(DATA_DIR, PAGES_FILE, b.data, b.len) != 0) {
+        log_msg("ERROR: could not write %s", PAGES_FILE);
+    }
+
+    buf_free(&lib);
+    buf_free(&b);
 }
 
 
@@ -312,6 +392,10 @@ static LIPCcode on_request(LIPC *lipc, const char *property, void *value, void *
         result = do_open(args);
     }
 
+    if (strcmp(property, "refresh") == 0) {
+        write_pages();
+    }
+
     if (strcmp(property, "ping") != 0) {
         remember_ack(id, result);
         write_data();
@@ -351,6 +435,7 @@ int main(int argc, char **argv) {
     }
 
     last_activity = time(NULL);
+    write_pages();
     write_data();
     log_msg("ready (pid %d)", (int)getpid());
 

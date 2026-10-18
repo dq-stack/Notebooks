@@ -140,6 +140,24 @@ test("buildNotebooks groups everything and sorts newest first", function () {
     assert.strictEqual(NB.entries(model.readingNow, "highlights").length, 2);
 });
 
+test("pageFor matches the pages the Kindle itself records", function () {
+    /* Plutarch's Lives (calibre APNX, 2300 per page): Kindle said page 27 at location 402 */
+    var even = { step: 2300, count: 2815 };
+    assert.strictEqual(NB.pageFor(even, 402), 27);
+    assert.strictEqual(NB.pageFor(even, 352), 23);
+    assert.strictEqual(NB.pageFor(even, 575), 38);
+    assert.strictEqual(NB.pageFor(even, 1), 1);
+    assert.strictEqual(NB.pageFor(even, 999999), 2815);
+
+    var listed = [488, 47624, 49660, 51649];
+    assert.strictEqual(NB.pageFor(listed, 1), 1);
+    assert.strictEqual(NB.pageFor(listed, 330), 2);
+    assert.strictEqual(NB.pageFor(listed, 345), 3);
+    assert.strictEqual(NB.pageFor(listed, 99999), 4);
+    assert.strictEqual(NB.pageFor(null, 5), null);
+    assert.strictEqual(NB.pageFor(even, null), null);
+});
+
 test("toggleList adds and removes list markers", function () {
     var r = NB.toggleList("one\ntwo", 0, 7, "bullet");
     assert.strictEqual(r.text, "• one\n• two");

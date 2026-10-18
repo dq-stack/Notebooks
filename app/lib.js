@@ -229,6 +229,39 @@
     }
 
 
+    /*
+     * Page number for a Kindle location from a book's APNX table, as the
+     * helper sends it: {step, count} for evenly spaced pages, else the list
+     * of page start positions. Location L starts at position (L - 1) * 150.
+     */
+    function pageFor(table, loc) {
+        if (!table || loc === null || loc === undefined) {
+            return null;
+        }
+
+        var pos = (loc - 1) * 150;
+
+        if (table.step) {
+            return Math.max(1, Math.min(table.count, Math.floor(pos / table.step) + 1));
+        }
+
+        var lo = 0;
+        var hi = table.length;
+
+        while (lo < hi) {
+            var mid = (lo + hi) >> 1;
+
+            if (table[mid] <= pos) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        return table.length ? Math.max(1, lo) : null;
+    }
+
+
     /* ----- notebooks ----- */
 
     function normTitle(t) {
@@ -485,6 +518,7 @@
         LOOSE: LOOSE,
         parseLibrary: parseLibrary,
         thumbnailPath: thumbnailPath,
+        pageFor: pageFor,
         parseAdded: parseAdded,
         parseClippings: parseClippings,
         kindleItems: kindleItems,
