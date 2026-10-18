@@ -30,12 +30,17 @@ if [ ! -f "$HELPER" ]; then
     exit 1
 fi
 
+# The page lives in notebooks-app/: mesquite names the app's storage folder
+# after it, so a generic name like "app" could share settings with another
+# app. Test builds before 1.0.0 used app/; remove our own leftover copy.
+rm -rf "$BASE/app"
+
 # Register (or update) the app. Values are constants, never user input.
 sqlite3 "$APPREG" <<EOF
 INSERT OR IGNORE INTO interfaces(interface) VALUES('application');
 INSERT OR IGNORE INTO handlerIds(handlerId) VALUES('$APP_ID');
 INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','lipcId','$APP_ID');
-INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','command','/usr/bin/mesquite -l $APP_ID -c file://$BASE/app/');
+INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','command','/usr/bin/mesquite -l $APP_ID -c file://$BASE/notebooks-app/');
 INSERT OR REPLACE INTO properties(handlerId,name,value) VALUES('$APP_ID','supportedOrientation','U');
 EOF
 

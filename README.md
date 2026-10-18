@@ -4,7 +4,9 @@
 
 Each book gets its own notebook. Your Kindle highlights and the notes you make on them in the reader appear there automatically, next to longer notes you write in Notebooks itself.
 
-<!-- Screenshots: mockups (docs/) + a real device screenshot of the keyboard to come -->
+![Notebooks: home, a book's notebook, and writing a note](docs/screens.png)
+
+*The app with public-domain sample books at the Paperwhite 2's app size (758×908). The keyboard is a real Paperwhite 2 screenshot.*
 
 ---
 
@@ -19,6 +21,8 @@ Each book gets its own notebook. Your Kindle highlights and the notes you make o
 - A full-height **writing screen** in a book font, with autosave
 - **Bullet lists, numbered lists and checklists** (tick items off right in the notebook)
 - **Loose notes** for anything not tied to a book
+- **Page numbers** for highlights, from the Kindle or worked out from the book's page file (APNX)
+- **Picks up where you left off**: reopening brings back the same notebook, page or note
 - Notes are **plain text files**, one folder per book, so they're readable on your computer:
   `notebooks/Walden/2026-10-18 201503.txt`
 - **Never silently loses a note:** "Saved" only appears once the text has been read back from disk
@@ -39,7 +43,7 @@ The first launch registers Notebooks with the Kindle's app manager.
 
 ### Updating
 
-Copy the new `extensions/notebooks` over the old one. Your notes in `/notebooks/` are never touched.
+Copy the new `extensions/notebooks` over the old one. Your notes in `/notebooks/` are never touched. The next tap of **Notebooks** closes the old version if it's still open.
 
 ### Uninstalling
 

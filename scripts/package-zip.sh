@@ -12,14 +12,14 @@ OUT="$ROOT/release"
 APP="$STAGING/extensions/notebooks"
 
 rm -rf "$STAGING"
-mkdir -p "$APP/bin" "$APP/app" "$STAGING/documents" "$OUT"
+mkdir -p "$APP/bin" "$APP/notebooks-app" "$STAGING/documents" "$OUT"
 
 for NAME in notebooks_helper notebooks_helper_hf; do
     cp "$ROOT/dist/$NAME" "$APP/bin/$NAME"
     chmod +x "$APP/bin/$NAME"
 done
 
-cp "$ROOT"/app/index.html "$ROOT"/app/app.css "$ROOT"/app/app.js "$ROOT"/app/lib.js "$ROOT"/app/config.xml "$APP/app/"
+cp "$ROOT"/app/index.html "$ROOT"/app/app.css "$ROOT"/app/app.js "$ROOT"/app/lib.js "$ROOT"/app/config.xml "$APP/notebooks-app/"
 cp "$ROOT/src/scripts/launch.sh" "$APP/launch.sh"
 cp "$ROOT/packaging/icon.png" "$APP/icon.png"
 cp "$ROOT/LICENSE" "$APP/LICENSE"
