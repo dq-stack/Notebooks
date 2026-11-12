@@ -312,6 +312,25 @@ var NBApp = (function () {
 
     /* ----- home ----- */
 
+    /*
+     * A title on two lines leaves no room for the counts line above the
+     * button: put the counts on the author line instead (first, so a long
+     * author name is what gets cut off). Measured once home is on screen.
+     */
+    function fitReadingCard(rn) {
+        if (!rn) {
+            return;
+        }
+
+        var title = $("reading-title");
+        var oneLine = parseFloat(window.getComputedStyle(title).lineHeight) || 32;
+        var wraps = title.offsetHeight > oneLine * 1.5;
+
+        $("reading-author").textContent = wraps ?
+            counts(rn).concat(rn.author ? [rn.author] : []).join(" · ") : (rn.author || "");
+        $("reading-counts").className = wraps ? "muted hidden" : "muted";
+    }
+
     function renderHome(keepScroll) {
         var rn = model.readingNow;
 
@@ -349,6 +368,7 @@ var NBApp = (function () {
 
         var keep = keepScroll ? list.scrollTop : 0;
         show("home");
+        fitReadingCard(rn);
         list.scrollTop = keep;
         updatePager("home-list");
         rememberPlace();
@@ -999,7 +1019,33 @@ var NBApp = (function () {
         rememberPlace();
     }
 
+    /*
+     * The layout is drawn in pixels for the 758 px wide, 212 ppi Paperwhite.
+     * Wider (sharper) screens, e.g. the 1072 px, 300 ppi Kindle 11th gen,
+     * zoom the whole page so everything is the same physical size.
+     */
+    function fitScreen() {
+        var w = (window.screen && window.screen.width) || window.innerWidth || 0;
+
+        if (w > 800) {
+            document.documentElement.style.zoom = String(w / 758);
+        }
+    }
+
+    /*
+     * Newer firmware (5.16+) always shows the system title bar with the app's
+     * name, so the home screen's own "Notebooks" heading would be a duplicate.
+     */
+    function fitChrome() {
+        if (window.kindle && window.kindle.chrome && window.kindle.chrome.isDecanterChromeEnabled) {
+            document.body.className += " system-title";
+        }
+    }
+
     function start() {
+        fitScreen();
+        fitChrome();
+
         try {
             var saved = parseInt(window.localStorage.getItem("nb-font"), 10);
 

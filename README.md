@@ -72,7 +72,10 @@ node tests/test_lib.js         # app logic: clippings, library, notebooks, lists
 
 ## Tested on
 
-Kindle Paperwhite 2 (6th gen), firmware 5.12.2.2. Other models and firmware are untested.
+- Kindle Paperwhite 2 (6th gen), firmware 5.12.2.2
+- Kindle 11th gen (2022), firmware 5.18.1
+
+Other models and firmware are untested. On sharper screens the app scales itself up to the same physical size as on the Paperwhite 2.
 
 ## Credits
 

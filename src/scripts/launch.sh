@@ -47,8 +47,12 @@ EOF
 # Normally nothing is left running: the helper closes Notebooks when you
 # leave it (memory is tight) and the app restores your place from state.js.
 # Clear out anything left over anyway, e.g. after an update.
-for PID in $(ps | grep "mesquite -l $APP_ID" | grep -v grep | awk '{print $1}'); do
-    kill "$PID" 2>/dev/null
+# Found through /proc: plain "ps" lists only terminal processes on newer
+# firmware (5.16+), so it would never see the app.
+for DIR in /proc/[0-9]*; do
+    case "$(tr '\0' ' ' < "$DIR/cmdline" 2>/dev/null)" in
+        "/usr/bin/mesquite -l $APP_ID "*) kill "${DIR#/proc/}" 2>/dev/null ;;
+    esac
 done
 
 if [ -f "$RUN/helper.pid" ]; then

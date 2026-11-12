@@ -143,6 +143,7 @@ svg .thin { stroke-width: 1.4; }
 }
 .reading-info > div { margin-bottom: 8px; }
 .reading-info .book-title { font-size: 28px; font-weight: bold; line-height: 1.15; max-height: 66px; overflow: hidden; }
+.reading-info .big-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reading-info .primary { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 56px; font-size: 22px; }
 
 .progress-row { display: table; width: 100%; }
@@ -154,6 +155,12 @@ svg .thin { stroke-width: 1.4; }
 .list-label { position: absolute; top: 366px; left: 40px; right: 40px; padding-top: 20px; }
 
 #home-list { top: 410px; bottom: 92px; }
+
+/* The system title bar already says "Notebooks" (see fitChrome). */
+.system-title #home header.bar { display: none; }
+.system-title #home .reading { top: 0; }
+.system-title #home .list-label { top: 282px; }
+.system-title #home-list { top: 326px; }
 
 .pages {
     position: absolute;
