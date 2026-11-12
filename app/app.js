@@ -752,14 +752,36 @@ var NBApp = (function () {
         scheduleSave();
     }
 
-    function onInput() {
+    var listTimer = null;
+
+    /*
+     * Continue a list after Enter. This rewrites the textarea, which must
+     * not happen inside the keyboard's input event: on the Kindle 11th gen
+     * (FW 5.18) changing value/selection there crashes mesquite (SIGSEGV).
+     */
+    function continueListLater() {
+        listTimer = null;
+
         var ta = $("ed-text");
-        var pos = ta.selectionStart;
-        var r = pos === ta.selectionEnd ? NB.continueList(ta.value, pos) : null;
+
+        if (!editing || ta.selectionStart !== ta.selectionEnd) {
+            return;
+        }
+
+        var r = NB.continueList(ta.value, ta.selectionStart);
 
         if (r) {
             ta.value = r.text;
             ta.setSelectionRange(r.start, r.end);
+            scheduleSave();
+        }
+    }
+
+    function onInput() {
+        var ta = $("ed-text");
+
+        if (!listTimer) {
+            listTimer = setTimeout(continueListLater, 0);
         }
 
         if (editing && ta.value !== editing.savedText) {
