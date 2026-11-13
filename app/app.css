@@ -222,6 +222,13 @@ svg .thin { stroke-width: 1.4; }
 
 #nb-list { top: 272px; bottom: 92px; }
 
+/* Highlights tab only: a row of sort choices between the tabs and the list. */
+.sort { position: absolute; top: 278px; left: 40px; right: 40px; height: 44px; text-align: right; }
+.sort .sort-label { font-size: 18px; color: #333333; line-height: 44px; margin-right: 6px; }
+.sort .sort-opt { height: 44px; font-size: 18px; font-weight: normal; padding: 0 16px; margin-left: 6px; }
+.sort .sort-opt.active { background: #000000; color: #FFFFFF; font-weight: bold; }
+#notebook.sorting #nb-list { top: 330px; }
+
 .entry { padding: 20px 0; border-bottom: 1px solid #999999; }
 .entry-head {
     display: table;

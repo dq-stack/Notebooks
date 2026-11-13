@@ -30,9 +30,11 @@
         <param name="localprefs" value="yes"/>
     </feature>
 
-    <!-- The page may only message the system chrome bar and our own helper. -->
+    <!-- The page may only message the system chrome bar, the keyboard (to turn
+         Shift on at the start of a sentence) and our own helper. -->
     <kindle:messaging>
         <kindle:app name="com.lab126.chromebar" value="yes"/>
+        <kindle:app name="com.lab126.keyboard" value="yes"/>
         <kindle:app name="com.dqstack.notebooks.helper" value="yes"/>
     </kindle:messaging>
 </widget>

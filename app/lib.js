@@ -424,6 +424,42 @@
     }
 
 
+    /*
+     * Order a notebook's highlights (and Kindle notes) for the Highlights
+     * tab: "newest" (default), "oldest" or "page" (place in the book; items
+     * with no known place go last). pageOf(item) gives a page number or null.
+     */
+    function sortHighlights(items, order, pageOf) {
+        var out = items.slice();
+
+        function place(item) {
+            var page = pageOf ? pageOf(item) : null;
+            return [page === null || page === undefined ? Infinity : page,
+                item.locStart === null || item.locStart === undefined ? Infinity : item.locStart];
+        }
+
+        out.sort(function (a, b) {
+            if (order === "page") {
+                var pa = place(a);
+                var pb = place(b);
+
+                if (pa[0] !== pb[0]) {
+                    return pa[0] < pb[0] ? -1 : 1;
+                }
+
+                if (pa[1] !== pb[1]) {
+                    return pa[1] < pb[1] ? -1 : 1;
+                }
+            }
+
+            var d = (a.added || 0) - (b.added || 0);
+            return order === "oldest" || order === "page" ? d : -d;
+        });
+
+        return out;
+    }
+
+
     /* ----- editor text operations ----- */
 
     var LIST_RE = /^(• |\d+\. |\[[ xX]\] )/;
@@ -500,6 +536,31 @@
         return { text: t, start: pos + marker.length, end: pos + marker.length };
     }
 
+    /*
+     * Capitalise a lower-case letter just typed at pos - 1 when it starts a
+     * sentence: at the start of a line (after any list marker) or after
+     * ". ", "? " or "! ". Returns the new text, or null to leave it alone.
+     */
+    function autoCap(text, pos) {
+        var c = text.charAt(pos - 1);
+
+        if (pos < 1 || c.toUpperCase() === c || c.toLowerCase() !== c || !sentenceStart(text, pos - 1)) {
+            return null;
+        }
+
+        return text.slice(0, pos - 1) + c.toUpperCase() + text.slice(pos);
+    }
+
+    /*
+     * True if a letter typed at pos would start a sentence: at the start of
+     * a line (after any list marker) or after ". ", "? " or "! ".
+     */
+    function sentenceStart(text, pos) {
+        var before = text.slice(text.lastIndexOf("\n", pos - 1) + 1, pos);
+        return /^\s*((•|-|\*|\d+\.|\[[ xX]\])\s+)?$/.test(before) ||
+            /[.?!]["'”’)\]]?\s+$/.test(before);
+    }
+
     /* Flip "[ ]" / "[x]" at the start of line number index (0-based). */
     function toggleCheck(text, index) {
         var lines = text.split("\n");
@@ -528,6 +589,9 @@
         noteCreated: noteCreated,
         buildNotebooks: buildNotebooks,
         entries: entries,
+        sortHighlights: sortHighlights,
+        autoCap: autoCap,
+        sentenceStart: sentenceStart,
         toggleList: toggleList,
         continueList: continueList,
         toggleCheck: toggleCheck

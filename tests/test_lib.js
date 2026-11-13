@@ -175,6 +175,39 @@ test("continueList carries lists on and ends them on an empty item", function ()
     assert.strictEqual(NB.continueList("plain\n", 6), null);
 });
 
+test("autoCap capitalises the first letter of a line or sentence", function () {
+    assert.strictEqual(NB.autoCap("h", 1), "H");
+    assert.strictEqual(NB.autoCap("One.\nt", 6), "One.\nT");
+    assert.strictEqual(NB.autoCap("Done. n", 7), "Done. N");
+    assert.strictEqual(NB.autoCap("Really? y", 9), "Really? Y");
+    assert.strictEqual(NB.autoCap("• b", 3), "• B");
+    assert.strictEqual(NB.autoCap("- b", 3), "- B");
+    assert.strictEqual(NB.autoCap("12. b", 5), "12. B");
+    assert.strictEqual(NB.autoCap("[ ] b", 5), "[ ] B");
+    assert.strictEqual(NB.autoCap("He said \"go.\" t", 15), "He said \"go.\" T");
+    assert.strictEqual(NB.autoCap("one t", 5), null);
+    assert.strictEqual(NB.autoCap("3.5 t", 5), null);
+    assert.strictEqual(NB.autoCap("End. 4", 6), null);
+    assert.strictEqual(NB.autoCap("End. T", 6), null);
+    assert.strictEqual(NB.autoCap("Done.x", 6), null);
+});
+
+test("sortHighlights orders by newest, oldest or page", function () {
+    var items = [
+        { id: "a", added: 2, locStart: 300 },
+        { id: "b", added: 3, locStart: 100 },
+        { id: "c", added: 1, locStart: 200 },
+        { id: "d", added: 4, locStart: null }
+    ];
+    var ids = function (list) { return list.map(function (i) { return i.id; }).join(""); };
+    var pageOf = function (i) { return i.locStart === null ? null : Math.ceil(i.locStart / 150); };
+    assert.strictEqual(ids(NB.sortHighlights(items, "newest", pageOf)), "dbac");
+    assert.strictEqual(ids(NB.sortHighlights(items, "oldest", pageOf)), "cabd");
+    assert.strictEqual(ids(NB.sortHighlights(items, "page", pageOf)), "bcad");
+    assert.strictEqual(ids(NB.sortHighlights(items, "page", null)), "bcad");
+    assert.strictEqual(ids(items), "abcd");
+});
+
 test("toggleCheck flips only checklist lines", function () {
     assert.strictEqual(NB.toggleCheck("[ ] a\nb", 0), "[x] a\nb");
     assert.strictEqual(NB.toggleCheck("[x] a", 0), "[ ] a");

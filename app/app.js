@@ -24,6 +24,7 @@ var NBApp = (function () {
     var model = null;
     var current = null;     /* open notebook */
     var tab = "all";
+    var sortOrder = "newest";   /* Highlights tab: "newest", "oldest" or "page" */
     var editing = null;     /* { path, isNew, savedText, created } */
     var saveTimer = null;
     var saving = false;
@@ -236,13 +237,91 @@ var NBApp = (function () {
     }
 
 
-    /* ----- paging (lists scroll a whole screen at a time; e-ink friendly) ----- */
+    /*
+     * ----- paging (lists move a whole screen at a time; e-ink friendly) -----
+     * A page starts at the first item the previous page cut off, so nothing
+     * is split across pages. Only an item taller than the list itself has
+     * to be split; then the page moves on by a full screen.
+     */
+    function pageStops(list) {
+        var h = list.clientHeight || 1;
+        var items = list.children;
+        var stops = [0];
+        var top = 0;
+
+        while (top + h < list.scrollHeight - 2 && stops.length < 500) {
+            var next = top + h;
+
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].className === "page-spacer") {
+                    continue;
+                }
+
+                var t = items[i].offsetTop;
+
+                if (t + items[i].offsetHeight > top + h + 1) {
+                    next = t > top ? t : top + h;
+                    break;
+                }
+            }
+
+            top = next;
+            stops.push(top);
+        }
+
+        return stops;
+    }
+
+    /* Index into stops of the page now showing (the last page may be pulled up short). */
+    function pageIndex(list, stops) {
+        var y = list.scrollTop;
+
+        if (y >= list.scrollHeight - list.clientHeight - 1) {
+            return stops.length - 1;
+        }
+
+        var page = 0;
+
+        for (var i = 0; i < stops.length; i++) {
+            if (stops[i] <= y + 1) {
+                page = i;
+            }
+        }
+
+        return page;
+    }
+
+    /*
+     * Work out the page starts. A short last page needs blank space below
+     * it, or the list can't scroll far enough to start that page on an
+     * item and would show the end of the previous one at the top.
+     */
+    function layoutPages(list) {
+        var y = list.scrollTop;
+        var old = list.lastChild;
+
+        if (old && old.className === "page-spacer") {
+            list.removeChild(old);
+        }
+
+        var stops = pageStops(list);
+        var gap = stops[stops.length - 1] + list.clientHeight - list.scrollHeight;
+
+        if (stops.length > 1 && gap > 0) {
+            var spacer = el("div", "page-spacer");
+            spacer.style.height = gap + "px";
+            list.appendChild(spacer);
+        }
+
+        list.scrollTop = y;
+        return stops;
+    }
 
     function updatePager(listId) {
         var list = $(listId);
-        var h = list.clientHeight || 1;
-        var pages = Math.max(1, Math.ceil((list.scrollHeight - 2) / h));
-        var page = Math.min(pages, Math.round(list.scrollTop / h) + 1);
+        var stops = layoutPages(list);
+        var pages = stops.length;
+        var page = pageIndex(list, stops) + 1;
         $(listId + "-page").textContent = pages > 1 ? "Page " + page + " of " + pages : "";
 
         var buttons = document.querySelectorAll('[data-pager="' + listId + '"]');
@@ -254,7 +333,9 @@ var NBApp = (function () {
 
     function turnPage(listId, dir) {
         var list = $(listId);
-        list.scrollTop = Math.max(0, list.scrollTop + dir * list.clientHeight);
+        var stops = layoutPages(list);
+        var page = Math.max(0, Math.min(stops.length - 1, pageIndex(list, stops) + dir));
+        list.scrollTop = stops[page];
         updatePager(listId);
         rememberPlace();
     }
@@ -448,7 +529,22 @@ var NBApp = (function () {
         var keep = resetScroll ? 0 : list.scrollTop;
         clear(list);
 
+        var sorting = tab === "highlights" && nb.kindle.length > 1;
+        var screen = $("notebook");
+        screen.className = screen.className.replace(/\s*sorting/g, "") + (sorting ? " sorting" : "");
+        $("nb-sort").className = sorting ? "sort" : "sort hidden";
+
+        var opts = document.querySelectorAll(".sort-opt");
+
+        for (i = 0; i < opts.length; i++) {
+            opts[i].className = "sort-opt" + (opts[i].getAttribute("data-sort") === sortOrder ? " active" : "");
+        }
+
         var items = NB.entries(nb, tab);
+
+        if (tab === "highlights") {
+            items = NB.sortHighlights(items, sortOrder, pageNumber);
+        }
 
         for (i = 0; i < items.length; i++) {
             list.appendChild(entryNode(items[i]));
@@ -473,14 +569,19 @@ var NBApp = (function () {
         return head;
     }
 
-    /* Page as the Kindle recorded it, else worked out from the book's APNX, else the location. */
-    function where(item) {
-        if (item.page !== null) {
-            return "Page " + item.page;
+    /* Page as the Kindle recorded it, else worked out from the book's APNX; null if unknown. */
+    function pageNumber(item) {
+        if (item.page !== null && item.page !== undefined) {
+            return item.page;
         }
 
         var table = current && current.book && window.NB_PAGES ? window.NB_PAGES[current.book.path] : null;
-        var page = NB.pageFor(table, item.locStart);
+        return NB.pageFor(table, item.locStart) || null;
+    }
+
+    /* Page if known, else the location. */
+    function where(item) {
+        var page = pageNumber(item);
 
         if (page) {
             return "Page " + page;
@@ -619,6 +720,9 @@ var NBApp = (function () {
         $("ed-title").textContent = current.title;
         $("ed-meta").textContent = "Your note · " + longDate(editing.created);
         $("ed-text").value = editing.savedText;
+        lastText = editing.savedText;
+        tidy = [];
+        wantShift = false;
         $("tb-delete").style.visibility = editing.isNew ? "hidden" : "visible";
         setStatus("");
         applyFont();
@@ -749,42 +853,129 @@ var NBApp = (function () {
         ta.value = r.text;
         ta.focus();
         ta.setSelectionRange(r.start, r.end);
+        lastText = ta.value;
         scheduleSave();
     }
 
-    var listTimer = null;
+    var inputTimer = null;
+    var lastText = "";     /* textarea value after the last input we handled */
+    var tidy = [];         /* fixes noted while typing: { list|cap: true, pos } */
+    var wantShift = false; /* a key just typed ended a sentence or line */
 
     /*
-     * Continue a list after Enter. This rewrites the textarea, which must
-     * not happen inside the keyboard's input event: on the Kindle 11th gen
-     * (FW 5.18) changing value/selection there crashes mesquite (SIGSEGV).
+     * Turn Shift on for the next letter. The keyboard never does this by
+     * itself after a full stop or new line in a mesquite app. "Opening" it
+     * again as type Abc while it is up switches Shift on (type abc leaves it
+     * off). A message to the keyboard, not a change to the textarea, so it
+     * is safe from the input crash.
      */
-    function continueListLater() {
-        listTimer = null;
+    function shiftKeyboard() {
+        try {
+            window.kindle.messaging.sendStringMessage("com.lab126.keyboard", "open", APP_ID + ":Abc:1");
+        } catch (e) {
+            /* no Kindle keyboard: the typed letter is still capitalised afterwards */
+        }
+    }
+
+    /*
+     * Tidy what was just typed: carry a list on after Enter and capitalise
+     * the first letter of a line or sentence. Changing the textarea inside
+     * the keyboard's input event crashes mesquite on the Kindle 11th gen
+     * (FW 5.18, SIGSEGV), so onInput only notes what needs doing (reading
+     * is fine) and afterInput makes the changes on the next tick. Keys
+     * typed in between are kept, and the cursor stays after them.
+     */
+    function afterInput() {
+        inputTimer = null;
 
         var ta = $("ed-text");
+        var text = ta.value;
+        var cursor = ta.selectionEnd;
+        var collapsed = ta.selectionEnd - ta.selectionStart <= 1;
+        var changed = false;
 
-        if (!editing || ta.selectionStart !== ta.selectionEnd) {
-            return;
+        for (var i = 0; i < tidy.length; i++) {
+            var fix = tidy[i];
+            var r = null;
+
+            if (fix.list) {
+                r = NB.continueList(text, fix.pos);
+            } else if (/[a-z]/i.test(text.charAt(fix.pos - 1))) {
+                var capped = NB.autoCap(text, fix.pos);
+                r = capped === null ? null : { text: capped };
+            }
+
+            if (!r) {
+                continue;
+            }
+
+            var delta = r.text.length - text.length;
+            text = r.text;
+            changed = true;
+
+            if (cursor >= fix.pos) {
+                cursor += delta;
+            }
+
+            for (var j = i + 1; j < tidy.length; j++) {
+                if (tidy[j].pos >= fix.pos) {
+                    tidy[j].pos += delta;
+                }
+            }
         }
 
-        var r = NB.continueList(ta.value, ta.selectionStart);
+        tidy = [];
 
-        if (r) {
-            ta.value = r.text;
-            ta.setSelectionRange(r.start, r.end);
-            scheduleSave();
+        if (changed && editing) {
+            ta.value = text;
+
+            if (collapsed) {
+                ta.setSelectionRange(cursor, cursor);
+            }
         }
+
+        if (wantShift && editing && collapsed && NB.sentenceStart(text, cursor)) {
+            shiftKeyboard();
+        }
+
+        wantShift = false;
+
+        lastText = ta.value;
+        scheduleSave();
     }
 
     function onInput() {
         var ta = $("ed-text");
+        var text = ta.value;
+        var pos = ta.selectionEnd;
 
-        if (!listTimer) {
-            listTimer = setTimeout(continueListLater, 0);
+        /*
+         * One character typed at the cursor: note any fix it needs. The
+         * Kindle's browser reports the character just typed as selected
+         * while its input event runs (start = end - 1); others report a
+         * plain cursor (start = end). Both mean "typed at pos".
+         */
+        var span = pos - ta.selectionStart;
+
+        if (editing && (span === 0 || span === 1) && text.length === lastText.length + 1) {
+            if (text.charAt(pos - 1) === "\n") {
+                tidy.push({ list: true, pos: pos });
+            } else if (NB.autoCap(text, pos) !== null) {
+                tidy.push({ cap: true, pos: pos });
+            }
+
+            if (/\s/.test(text.charAt(pos - 1)) && NB.sentenceStart(text, pos)) {
+                wantShift = true;
+            }
         }
 
-        if (editing && ta.value !== editing.savedText) {
+        lastText = text;
+
+        if (!inputTimer) {
+            inputTimer = setTimeout(afterInput, 0);
+        }
+
+        if (editing && text !== editing.savedText) {
             setStatus("");
         }
 
@@ -884,6 +1075,24 @@ var NBApp = (function () {
                     renderNotebook(true);
                 };
             }(tabs[i].getAttribute("data-tab")));
+        }
+
+        var sorts = document.querySelectorAll(".sort-opt");
+
+        for (i = 0; i < sorts.length; i++) {
+            sorts[i].onclick = (function (key) {
+                return function () {
+                    sortOrder = key;
+
+                    try {
+                        window.localStorage.setItem("nb-sort", key);
+                    } catch (e) {
+                        /* per-device preference only; fine to lose */
+                    }
+
+                    renderNotebook(true);
+                };
+            }(sorts[i].getAttribute("data-sort")));
         }
 
         var pagers = document.querySelectorAll("[data-pager]");
@@ -1073,6 +1282,12 @@ var NBApp = (function () {
 
             if (saved >= 0 && saved < FONT_SIZES.length) {
                 fontIndex = saved;
+            }
+
+            var order = window.localStorage.getItem("nb-sort");
+
+            if (order === "oldest" || order === "page") {
+                sortOrder = order;
             }
         } catch (e) {
             /* no stored preference */

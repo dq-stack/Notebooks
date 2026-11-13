@@ -158,7 +158,13 @@ async function main() {
         window.NB_STATE_URL = "/state.js";
         window.kindle = {
             messaging: {
-                sendStringMessage: function (app, prop, msg) { window.__helper(prop, msg); },
+                sendStringMessage: function (app, prop, msg) {
+                    if (app === "com.lab126.keyboard") {
+                        window.__kb = (window.__kb || []).concat([prop + " " + msg]);
+                    } else {
+                        window.__helper(prop, msg);
+                    }
+                },
                 sendMessage: function () {}
             },
             appmgr: {}
@@ -183,7 +189,19 @@ async function main() {
 
     await page.click('[data-tab="highlights"]');
     assert.strictEqual((await page.$$("#nb-list .entry")).length, 2);
+
+    /* Highlights tab only: sort newest (default), oldest, by page */
+    assert.ok(await visible(page, "#nb-sort"));
+    var hl = function () { return page.$$eval("#nb-list .entry-head span:first-child", function (n) { return n.map(function (e) { return e.textContent; }); }); };
+    assert.deepStrictEqual(await hl(), ["Highlight · Page 110", "Kindle note · Page 131"]);
+    await page.click('[data-sort="oldest"]');
+    assert.deepStrictEqual(await hl(), ["Kindle note · Page 131", "Highlight · Page 110"]);
+    await page.click('[data-sort="page"]');
+    assert.deepStrictEqual(await hl(), ["Highlight · Page 110", "Kindle note · Page 131"]);
+    await shot(page, "2b-sort");
+    await page.click('[data-sort="newest"]');
     await page.click('[data-tab="all"]');
+    assert.ok(!(await visible(page, "#nb-sort")));
 
     /* Read book */
     await page.click("#nb-read");
@@ -236,6 +254,45 @@ async function main() {
     await page.waitForFunction(function () { return !document.getElementById("notebook").classList.contains("hidden"); });
     assert.strictEqual(store[saved[0]], undefined);
 
+    /* Capitals at the start of a sentence or line */
+    await page.click("#nb-new");
+    await page.click("#ed-text");
+    await page.evaluate(function () { window.__kb = []; });
+    await page.keyboard.type("first thing.");
+    await page.waitForTimeout(50);
+    assert.deepStrictEqual(await page.evaluate(function () { return window.__kb; }), [], "no Shift mid-sentence");
+    await page.keyboard.type(" ");
+    await page.waitForTimeout(50);
+    assert.deepStrictEqual(await page.evaluate(function () { return window.__kb; }),
+        ["open com.dqstack.notebooks:Abc:1"], "Shift on after a full stop");
+    await page.keyboard.type("second? third");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("new line 3.5 apples");
+    await page.click("#tb-bullet");
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("bullet");
+    await page.waitForTimeout(100);
+    assert.strictEqual(await page.inputValue("#ed-text"),
+        "First thing. Second? Third\n• New line 3.5 apples\n• Bullet");
+
+    /* The Kindle's browser reports the letter just typed as selected during the input event */
+    await page.keyboard.type(". ");
+    await page.evaluate(function () {
+        var ta = document.getElementById("ed-text");
+        var n = ta.value.length;
+        ta.value = ta.value + "k";
+        ta.setSelectionRange(n, n + 1);
+        ta.dispatchEvent(new Event("input"));
+    });
+    await page.waitForTimeout(100);
+    assert.ok(/Bullet\. K$/.test(await page.inputValue("#ed-text")), "capital with Kindle-style selection");
+    assert.strictEqual(await page.$eval("#ed-text", function (t) { return t.selectionStart + "-" + t.selectionEnd; }),
+        (await page.inputValue("#ed-text")).length + "-" + (await page.inputValue("#ed-text")).length);
+    await page.click("#tb-delete");
+    await page.click("#modal-ok");
+    await page.waitForFunction(function () { return !document.getElementById("notebook").classList.contains("hidden"); });
+
     /* Coming back to the app keeps your place and picks up new data */
     store["Walden/2026-10-19 080000.txt"] = "Written on the computer";
     await page.evaluate(function () { window.kindle.appmgr.ongo(); });
@@ -260,6 +317,51 @@ async function main() {
     assert.strictEqual(await page.textContent("#nb-title"), "Loose notes");
     assert.ok(!(await visible(page, "#nb-read")));
     await shot(page, "4-loose");
+
+    /* Pages never cut an item in half: every item is whole on some page */
+    for (var n = 0; n < 14; n++) {
+        store["Loose notes/2026-10-" + (10 + n) + " 090000.txt"] = "Note " + n + "\n" +
+            new Array(1 + (n * 7) % 9).join("A longer line of text to vary the height.\n");
+    }
+    await page.waitForTimeout(3100);    /* resume() ignores repeats within 3 s */
+    await page.evaluate(function () { window.kindle.appmgr.ongo(); });
+    await page.waitForFunction(function () { return document.querySelectorAll("#nb-list .entry").length >= 14; }, null, { timeout: 8000 });
+    var label = await page.textContent("#nb-list-page");
+    var total = +/of (\d+)/.exec(label)[1];
+    assert.ok(total > 1, "several pages");
+    var whole = {};
+    for (var pg = 1; pg <= total; pg++) {
+        assert.strictEqual(await page.textContent("#nb-list-page"), "Page " + pg + " of " + total);
+        var seen = await page.$eval("#nb-list", function (list) {
+            var out = [];
+            for (var i = 0; i < list.children.length; i++) {
+                var c = list.children[i];
+                if (c.className !== "page-spacer" && c.offsetTop >= list.scrollTop - 1 && c.offsetTop + c.offsetHeight <= list.scrollTop + list.clientHeight + 1) {
+                    out.push(i);
+                }
+            }
+            return out;
+        });
+        seen.forEach(function (i) { whole[i] = true; });
+        if (pg < total) {
+            await page.click("#notebook .pager.next");
+        }
+    }
+    var count = await page.$$eval("#nb-list .entry", function (n) { return n.length; });
+    assert.strictEqual(await page.$eval("#nb-list", function (list) {
+        for (var i = 0; i < list.children.length; i++) {
+            var c = list.children[i];
+            if (c.offsetTop + c.offsetHeight > list.scrollTop + 1) { return c.offsetTop >= list.scrollTop - 1; }
+        }
+        return true;
+    }), true, "last page starts on a whole item");
+    assert.strictEqual(Object.keys(whole).length, count, "every item shown whole");
+    await shot(page, "4b-last-page");
+    for (pg = total; pg > 1; pg--) {
+        await page.click("#notebook .pager.prev");
+    }
+    assert.strictEqual(await page.textContent("#nb-list-page"), "Page 1 of " + total);
+    assert.strictEqual(await page.$eval("#nb-list", function (l) { return l.scrollTop; }), 0);
 
     /* Closed when you leave, reopened: back in the same notebook and note */
     await page.click("#nb-back");
