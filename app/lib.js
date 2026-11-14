@@ -132,6 +132,8 @@
 
             out.push({
                 kind: kind[1].toLowerCase(),
+                head: lines[0],         /* exact lines, to find this entry again when deleting */
+                meta: meta,
                 title: ta.title,
                 author: ta.author,
                 page: page ? +page[1] : null,
@@ -153,6 +155,7 @@
      */
     function kindleItems(clips) {
         var latest = {};
+        var versions = {};
         var keys = [];
 
         for (var i = 0; i < clips.length; i++) {
@@ -162,9 +165,12 @@
             if (!latest[key]) {
                 keys.push(key);
                 latest[key] = c;
+                versions[key] = [];
             } else if (c.added >= latest[key].added) {
                 latest[key] = c;
             }
+
+            versions[key].push({ head: c.head, meta: c.meta });
         }
 
         var highlights = [];
@@ -181,7 +187,8 @@
                 locEnd: e.locEnd,
                 added: e.added,
                 quote: e.kind === "highlight" ? e.text : "",
-                note: e.kind === "note" ? e.text : ""
+                note: e.kind === "note" ? e.text : "",
+                clips: versions[keys[i]]    /* every My Clippings entry behind this item */
             };
 
             (e.kind === "note" ? notes : highlights).push(item);
@@ -220,6 +227,7 @@
                 best.type = "kindle-note";
                 best.note = n.note;
                 best.added = Math.max(best.added, n.added);
+                best.clips = best.clips.concat(n.clips);
             } else {
                 items.push(n);
             }
@@ -561,6 +569,29 @@
             /[.?!]["'”’)\]]?\s+$/.test(before);
     }
 
+    /*
+     * The helper request that deletes a Kindle highlight or note (and a note
+     * attached to it): the book's path, then each of its My Clippings entries
+     * as "<title line>\t<meta line>". null if a line can't be sent safely.
+     */
+    function unhighlightRequest(item, bookPath) {
+        var lines = [bookPath || ""];
+        var clips = item.clips || [];
+
+        for (var i = 0; i < clips.length; i++) {
+            var head = String(clips[i].head || "").replace(/\r/g, "");
+            var meta = String(clips[i].meta || "").replace(/\r/g, "");
+
+            if (!head || !meta || /[\t\n]/.test(head + meta)) {
+                return null;
+            }
+
+            lines.push(head + "\t" + meta);
+        }
+
+        return clips.length && !/[\t\n]/.test(lines[0]) ? lines.join("\n") : null;
+    }
+
     /* Flip "[ ]" / "[x]" at the start of line number index (0-based). */
     function toggleCheck(text, index) {
         var lines = text.split("\n");
@@ -594,7 +625,8 @@
         sentenceStart: sentenceStart,
         toggleList: toggleList,
         continueList: continueList,
-        toggleCheck: toggleCheck
+        toggleCheck: toggleCheck,
+        unhighlightRequest: unhighlightRequest
     };
 
     if (typeof module !== "undefined" && module.exports) {

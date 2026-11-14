@@ -208,6 +208,24 @@ test("sortHighlights orders by newest, oldest or page", function () {
     assert.strictEqual(ids(items), "abcd");
 });
 
+test("unhighlightRequest lists every clipping behind an item", function () {
+    var items = NB.kindleItems(NB.parseClippings(CLIPS));
+    var walden = items.filter(function (i) { return i.title === "Walden" && i.locStart === 1095; })[0];
+    var req = NB.unhighlightRequest(walden, "/mnt/us/documents/Walden.azw3").split("\n");
+    assert.strictEqual(req[0], "/mnt/us/documents/Walden.azw3");
+    assert.strictEqual(req.length, 3, "both versions of the edited highlight");
+    assert.ok(/^\ufeff?Walden \(Henry David Thoreau\)\t- Your Highlight at location 1095-1096 \|/.test(req[1]));
+
+    var noted = items.filter(function (i) { return i.title === "Walden" && i.locStart === 1308; })[0];
+    req = NB.unhighlightRequest(noted, "").split("\n");
+    assert.strictEqual(req[0], "");
+    assert.strictEqual(req.length, 3, "the highlight and its note");
+    assert.ok(/Your Note at location 1310/.test(req[2]));
+
+    assert.strictEqual(NB.unhighlightRequest({ clips: [{ head: "A\tB", meta: "- Your Highlight" }] }, ""), null);
+    assert.strictEqual(NB.unhighlightRequest({ clips: [] }, ""), null);
+});
+
 test("toggleCheck flips only checklist lines", function () {
     assert.strictEqual(NB.toggleCheck("[ ] a\nb", 0), "[x] a\nb");
     assert.strictEqual(NB.toggleCheck("[x] a", 0), "[ ] a");

@@ -9,6 +9,9 @@
  *   refresh  "<id>"
  *   open     "<id>\n/mnt/us/documents/<book file>"
  *   state    "<id>\n<JSON>" where you are in the app (written to state.js)
+ *   unhighlight "<id>\n<book path or empty>\n<title line>\t<meta line>\n..."
+ *            delete a highlight (and its note): every My Clippings entry
+ *            listed, and the matching records in the book's .azw3r file
  *   ping     anything (keeps the helper alive while the app is open)
  *
  * After every request the helper rewrites /tmp/notebooks/data.js with the
@@ -53,6 +56,8 @@
 #define CLIPPINGS "/mnt/us/documents/My Clippings.txt"
 #define DOCUMENTS "/mnt/us/documents/"
 #define IDLE_EXIT_SECONDS (15 * 60)
+#define BACKUP_ROOT NOTES_ROOT "/.backup"
+#define MAX_CLIP_PAIRS 64
 #define MAX_ACKS 32
 
 /* Columns: location, title, author, percent, lastAccess, cdeKey, cdeType */
@@ -401,6 +406,224 @@ static const char *do_state(const char *json) {
 }
 
 
+/*
+ * The book's own annotation file: "<book>.sdr/<name><hash>.azw3r". Returns 1
+ * and the path if there is exactly one, 0 if there is none, -1 if the book
+ * keeps annotations some other way (not deleting from a file we can't read).
+ */
+static int find_annotation_file(const char *book, char *path, size_t path_n, char *dir, size_t dir_n) {
+    const char *dot = strrchr(book, '.');
+    const char *slash = strrchr(book, '/');
+
+    if (!dot || !slash || dot < slash) {
+        return -1;
+    }
+
+    snprintf(dir, dir_n, "%.*s.sdr", (int)(dot - book), book);
+
+    DIR *d = opendir(dir);
+
+    if (!d) {
+        return 0;
+    }
+
+    int found = 0, other = 0;
+    struct dirent *e;
+
+    while ((e = readdir(d)) != NULL) {
+        size_t n = strlen(e->d_name);
+        const char *ext = strrchr(e->d_name, '.');
+
+        if (!ext || e->d_name[0] == '.') {
+            continue;
+        }
+
+        if (strcmp(ext, ".azw3r") == 0 && strcmp(dot, ".azw3") == 0) {
+            found++;
+            snprintf(path, path_n, "%s/%.*s", dir, (int)n, e->d_name);
+        } else if (strcmp(ext, ".azw3r") == 0 || strcmp(ext, ".mbp1") == 0 || strcmp(ext, ".mbp") == 0 ||
+                   strcmp(ext, ".yjr") == 0 || strcmp(ext, ".pdfr") == 0 || strcmp(ext, ".tpz") == 0) {
+            other++;
+        }
+    }
+
+    closedir(d);
+
+    if (other || found > 1) {
+        return -1;
+    }
+
+    return found;
+}
+
+static int write_and_check(const char *dir, const char *path, const struct buf *data) {
+    struct buf back = {0};
+
+    if (write_file_atomic(dir, path, data->data ? data->data : "", data->len) != 0) {
+        return -1;
+    }
+
+    int same = read_file(path, 32 * 1024 * 1024, &back) == 0 && back.len == data->len &&
+        (data->len == 0 || memcmp(back.data, data->data, data->len) == 0);
+    buf_free(&back);
+    return same ? 0 : -1;
+}
+
+/*
+ * Delete a highlight (with its note) from My Clippings.txt and from the
+ * book's annotation file. Nothing is written unless both new files were
+ * built and checked; the originals are copied to /mnt/us/notebooks/.backup
+ * first; each written file is read back; on any failure what was already
+ * written is put back.
+ */
+static const char *do_unhighlight(char *args) {
+    char *nl = strchr(args, '\n');
+
+    if (!nl) {
+        return "error: bad request";
+    }
+
+    *nl = '\0';
+    const char *book = args;
+    const char *heads[MAX_CLIP_PAIRS], *metas[MAX_CLIP_PAIRS];
+    struct clip_target targets[MAX_CLIP_PAIRS];
+    int n = 0;
+
+    for (char *line = nl + 1; line && *line; ) {
+        char *end = strchr(line, '\n');
+        char *tab = strchr(line, '\t');
+
+        if (end) {
+            *end = '\0';
+        }
+
+        if (!tab || n == MAX_CLIP_PAIRS) {
+            return "error: bad request";
+        }
+
+        *tab = '\0';
+        heads[n] = line;
+        metas[n] = tab + 1;
+
+        if (parse_clip_meta(metas[n], &targets[n].kind, &targets[n].loc, &targets[n].added) != 0) {
+            return "error: clipping not understood";
+        }
+
+        n++;
+        line = end ? end + 1 : NULL;
+    }
+
+    if (n == 0) {
+        return "error: bad request";
+    }
+
+    char ann[2048] = "", sdr[2048] = "";
+    int has_ann = 0;
+
+    if (book[0]) {
+        struct stat st;
+
+        if (strncmp(book, DOCUMENTS, strlen(DOCUMENTS)) != 0 || strstr(book, "/../") ||
+            stat(book, &st) != 0 || !S_ISREG(st.st_mode)) {
+            return "error: book not found";
+        }
+
+        has_ann = find_annotation_file(book, ann, sizeof ann, sdr, sizeof sdr);
+
+        if (has_ann < 0) {
+            return "error: can't delete highlights from this kind of book yet";
+        }
+    }
+
+    struct buf clip = {0}, new_clip = {0}, kr = {0}, new_kr = {0};
+    const char *result = "ok";
+    int clip_removed = 0, kr_removed = 0, kr_written = 0;
+    const char *why = "";
+
+    if (read_file(CLIPPINGS, 32 * 1024 * 1024, &clip) != 0 || !clip.len) {
+        result = "error: could not read My Clippings";
+        goto done;
+    }
+
+    if (clippings_remove(clip.data, clip.len, heads, metas, n, &new_clip, &clip_removed) != 0) {
+        result = "error: My Clippings changed; nothing deleted";
+        goto done;
+    }
+
+    if (has_ann) {
+        if (read_file(ann, 32 * 1024 * 1024, &kr) != 0 || !kr.len) {
+            result = "error: could not read the book's highlights";
+            goto done;
+        }
+
+        if (krds_remove(kr.data, kr.len, targets, n, &new_kr, &kr_removed, &why) != 0) {
+            log_msg("unhighlight %s: refused: %s", book, why);
+            result = "error: the book's highlight didn't match; nothing deleted";
+            goto done;
+        }
+    }
+
+    /* backup first: /mnt/us/notebooks/.backup/<time>/ */
+    char stamp[32], bdir[256], bpath[2304];
+    time_t now = time(NULL);
+
+    strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&now));
+    snprintf(bdir, sizeof bdir, "%s/%s", BACKUP_ROOT, stamp);
+    mkdir(NOTES_ROOT, 0755);
+    mkdir(BACKUP_ROOT, 0755);
+
+    if (mkdir(bdir, 0755) != 0 && errno != EEXIST) {
+        result = "error: could not make a backup; nothing deleted";
+        goto done;
+    }
+
+    snprintf(bpath, sizeof bpath, "%s/My Clippings.txt", bdir);
+
+    if (write_and_check(bdir, bpath, &clip) != 0) {
+        result = "error: could not make a backup; nothing deleted";
+        goto done;
+    }
+
+    if (kr_removed) {
+        snprintf(bpath, sizeof bpath, "%s/%s", bdir, strrchr(ann, '/') + 1);
+
+        if (write_and_check(bdir, bpath, &kr) != 0) {
+            result = "error: could not make a backup; nothing deleted";
+            goto done;
+        }
+
+        if (write_and_check(sdr, ann, &new_kr) != 0) {
+            write_and_check(sdr, ann, &kr);
+            result = "error: could not update the book; nothing deleted";
+            goto done;
+        }
+
+        kr_written = 1;
+    }
+
+    if (clip_removed && write_and_check(DOCUMENTS, CLIPPINGS, &new_clip) != 0) {
+        write_and_check(DOCUMENTS, CLIPPINGS, &clip);
+
+        if (kr_written) {
+            write_and_check(sdr, ann, &kr);
+        }
+
+        result = "error: could not update My Clippings; nothing deleted";
+        goto done;
+    }
+
+    log_msg("unhighlight %s: %d clipping(s), %d book record(s); backup %s",
+            book[0] ? book : "(no book)", clip_removed, kr_removed, bdir);
+
+done:
+    buf_free(&clip);
+    buf_free(&new_clip);
+    buf_free(&kr);
+    buf_free(&new_kr);
+    return result;
+}
+
+
 /* Kill the mesquite process showing Notebooks ("mesquite -l com.dqstack.notebooks ..."). */
 static void close_app_window(void) {
     static const char want[] = "-l\0" APP_ID;
@@ -475,6 +698,8 @@ static LIPCcode on_request(LIPC *lipc, const char *property, void *value, void *
         result = do_remove(args);
     } else if (strcmp(property, "open") == 0) {
         result = do_open(args);
+    } else if (strcmp(property, "unhighlight") == 0) {
+        result = do_unhighlight(args);
     } else if (strcmp(property, "state") == 0) {
         do_state(args);
         free(msg);
@@ -513,7 +738,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const char *props[] = {"save", "remove", "refresh", "open", "state", "ping"};
+    const char *props[] = {"save", "remove", "refresh", "open", "state", "ping", "unhighlight"};
 
     for (size_t i = 0; i < sizeof props / sizeof props[0]; i++) {
         if (LipcRegisterStringProperty(lipc, props[i], NULL, on_request, NULL) != LIPC_OK) {

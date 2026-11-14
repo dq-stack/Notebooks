@@ -26,4 +26,21 @@ int append_notes_json(struct buf *b, const char *root);
 int url_encode_path(const char *in, char *out, size_t out_size);
 int append_apnx_json(struct buf *b, const char *data, size_t n);
 
+/* Deleting a highlight: from My Clippings.txt and the book's .azw3r file. */
+#define CLIP_HIGHLIGHT 1
+#define CLIP_NOTE 2
+
+struct clip_target {
+    int kind;           /* CLIP_HIGHLIGHT or CLIP_NOTE */
+    long loc;           /* Kindle location the clipping starts at */
+    long long added;    /* "Added on" clock time, as civil_seconds() */
+};
+
+long long civil_seconds(int y, int mo, int d, int h, int mi, int s);
+int parse_clip_meta(const char *meta, int *kind, long *loc, long long *added);
+int krds_remove(const char *data, size_t n, const struct clip_target *t, int nt,
+                struct buf *out, int *removed, const char **why);
+int clippings_remove(const char *data, size_t n, const char *const *heads, const char *const *metas, int npairs,
+                     struct buf *out, int *removed);
+
 #endif

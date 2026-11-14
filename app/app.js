@@ -317,11 +317,29 @@ var NBApp = (function () {
         return stops;
     }
 
+    /*
+     * Hide anything that doesn't fit whole at the bottom of the page, so
+     * the page ends in blank space; it starts the next page instead. An
+     * item taller than the whole list can't fit anywhere, so it stays.
+     */
+    function hideCutOff(list) {
+        var top = list.scrollTop;
+        var bottom = top + list.clientHeight + 1;
+        var items = list.children;
+
+        for (var i = 0; i < items.length; i++) {
+            var t = items[i].offsetTop;
+            var cut = t + items[i].offsetHeight > bottom && t > top + 1;
+            items[i].style.visibility = cut ? "hidden" : "";
+        }
+    }
+
     function updatePager(listId) {
         var list = $(listId);
         var stops = layoutPages(list);
         var pages = stops.length;
         var page = pageIndex(list, stops) + 1;
+        hideCutOff(list);
         $(listId + "-page").textContent = pages > 1 ? "Page " + page + " of " + pages : "";
 
         var buttons = document.querySelectorAll('[data-pager="' + listId + '"]');
@@ -604,6 +622,9 @@ var NBApp = (function () {
 
         var label = item.type === "kindle-note" ? "Kindle note" : "Highlight";
         var loc = where(item);
+        box.onclick = function () {
+            confirmUnhighlight(item);
+        };
         box.appendChild(entryHead(loc ? label + " · " + loc : label, item.added ? longDate(item.added) : ""));
 
         if (item.quote) {
@@ -1010,6 +1031,38 @@ var NBApp = (function () {
                     leaveEditor();
                 } else {
                     setStatus("Not deleted", true);
+                }
+            });
+        });
+    }
+
+    /*
+     * Delete a Kindle highlight (with its note) from the book and from
+     * My Clippings. The helper backs both files up first and refuses if
+     * anything doesn't match exactly.
+     */
+    function confirmUnhighlight(item) {
+        var what = !item.quote ? "this note" : item.note ? "this highlight and its note" : "this highlight";
+
+        modal("Delete " + what + " from the book? A backup copy is kept.", function () {
+            var req = NB.unhighlightRequest(item, current && current.book ? current.book.path : "");
+            var id = req ? send("unhighlight", req) : null;
+
+            if (!id) {
+                toast("Couldn't delete that.");
+                return;
+            }
+
+            toast("Deleting…", 8000);
+            waitForAck(id, function (result) {
+                if (result === "ok") {
+                    toast("Deleted");
+                } else {
+                    toast(result ? String(result).replace(/^error: /, "Not deleted: ") : "Not deleted: no answer.", 4500);
+                }
+
+                if (current) {
+                    renderNotebook(false);
                 }
             });
         });

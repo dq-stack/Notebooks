@@ -141,6 +141,167 @@ static void test_apnx(void) {
     buf_free(&b);
 }
 
+
+/* ----- deleting highlights ----- */
+
+static void kput(struct buf *b, const void *p, size_t n) { buf_append(b, (const char *)p, n); }
+static void kint(struct buf *b, long v) { unsigned char x[5] = {1, (unsigned char)(v >> 24), (unsigned char)(v >> 16), (unsigned char)(v >> 8), (unsigned char)v}; kput(b, x, 5); }
+static void klong(struct buf *b, long long v) {
+    unsigned char x[9] = {2};
+    for (int i = 0; i < 8; i++) x[1 + i] = (unsigned char)(v >> (56 - 8 * i));
+    kput(b, x, 9);
+}
+static void kstr(struct buf *b, int type, const char *s) {
+    size_t n = strlen(s);
+    unsigned char x[4] = {(unsigned char)type, 0, (unsigned char)(n >> 8), (unsigned char)n};
+    kput(b, x, 4);
+    kput(b, s, n);
+}
+static void kend(struct buf *b) { unsigned char x = 0xff; kput(b, &x, 1); }
+static void krec(struct buf *b, const char *name, const char *start, long long ms, const char *text) {
+    kstr(b, 0xfe, name);
+    kstr(b, 3, start); kstr(b, 3, start); klong(b, ms); klong(b, ms); kstr(b, 3, "0");
+    if (text) kstr(b, 3, text);
+    kend(b);
+}
+
+/* A book file shaped like the Kindle's: prefs, annotations (2 highlights, 1 note, 1 bookmark), page table. */
+static void make_krds(struct buf *b, int first, int second) {
+    static const unsigned char magic[8] = {0, 0, 0, 0, 0, 0x1a, 0xb1, 0x26};
+    kput(b, magic, 8);
+    klong(b, 1);
+    kint(b, 3);
+    kstr(b, 0xfe, "font.prefs"); kstr(b, 3, "bookerly"); kint(b, 3); kend(b);
+    kstr(b, 0xfe, "annotation.cache.object");
+    kint(b, 3);
+    kint(b, 1); kstr(b, 0xfe, "saved.avl.interval.tree"); kint(b, first + second);
+    /* location 4285, created 1 Nov 2026 21:49:57 at UTC+11; location 165, 29 Oct 00:18:26 */
+    if (first) krec(b, "annotation.personal.highlight", "642740", 1793530197488LL, NULL);
+    if (second) krec(b, "annotation.personal.highlight", "24621", 1793193506661LL, NULL);
+    kend(b);
+    kint(b, 2); kstr(b, 0xfe, "saved.avl.interval.tree"); kint(b, 1);
+    krec(b, "annotation.personal.note", "642940", 1793530300000LL, "a note");
+    kend(b);
+    kint(b, 0); kstr(b, 0xfe, "saved.avl.interval.tree"); kint(b, 1);
+    krec(b, "annotation.personal.bookmark", "700000", 1793530400000LL, NULL);
+    kend(b);
+    kend(b);
+    kstr(b, 0xfe, "apnx.key"); kstr(b, 3, "1"); kend(b);
+}
+
+static int count_of(const struct buf *b, const char *needle) {
+    int c = 0;
+    size_t n = strlen(needle);
+    for (size_t i = 0; i + n <= b->len; i++) c += memcmp(b->data + i, needle, n) == 0;
+    return c;
+}
+
+static void test_clip_meta(void) {
+    int kind; long loc; long long t;
+
+    CHECK(parse_clip_meta("- Your Highlight on page 280 | location 4285-4287 | Added on Sunday, 1 November 2026 21:49:57", &kind, &loc, &t) == 0);
+    CHECK(kind == CLIP_HIGHLIGHT && loc == 4285 && t == civil_seconds(2026, 11, 1, 21, 49, 57));
+    CHECK(parse_clip_meta("- Your Note at location 566 | Added on Thursday, October 1, 2026 12:15:31 PM", &kind, &loc, &t) == 0);
+    CHECK(kind == CLIP_NOTE && loc == 566 && t == civil_seconds(2026, 10, 1, 12, 15, 31));
+    CHECK(parse_clip_meta("- Your Note at location 566 | Added on Thursday, October 1, 2026 12:15:31 AM", &kind, &loc, &t) == 0);
+    CHECK(t == civil_seconds(2026, 10, 1, 0, 15, 31));
+    /* Firmware 5.18 (Kindle 11th gen) writes "Location" with a capital. */
+    CHECK(parse_clip_meta("- Your Highlight on page 311 | Location 4769-4769 | Added on Saturday, 14 November 2026 18:49:15", &kind, &loc, &t) == 0);
+    CHECK(kind == CLIP_HIGHLIGHT && loc == 4769 && t == civil_seconds(2026, 11, 14, 18, 49, 15));
+    CHECK(parse_clip_meta("- Your Bookmark at location 5 | Added on Thursday, 1 October 2026 12:15:31", &kind, &loc, &t) != 0);
+    CHECK(parse_clip_meta("- Your Highlight at location 5 | Added on Thursday, 1 Smarch 2026 12:15:31", &kind, &loc, &t) != 0);
+    CHECK(civil_seconds(1970, 1, 1, 0, 0, 0) == 0 && civil_seconds(2026, 11, 1, 10, 49, 57) == 1793530197LL);
+}
+
+static void test_krds(void) {
+    struct buf in = {0}, out = {0}, two = {0}, one = {0};
+    struct clip_target hl = {CLIP_HIGHLIGHT, 4285, civil_seconds(2026, 11, 1, 21, 49, 57)};
+    struct clip_target hl2 = {CLIP_HIGHLIGHT, 165, civil_seconds(2026, 10, 29, 0, 18, 26)};
+    int removed;
+    const char *why;
+
+    struct buf only2 = {0};
+
+    make_krds(&two, 1, 1);
+    make_krds(&one, 1, 0);
+    make_krds(&only2, 0, 1);
+
+    /* one of two highlights: the other, the note and the bookmark stay; count lowered */
+    CHECK(krds_remove(two.data, two.len, &hl, 1, &out, &removed, &why) == 0 && removed == 1);
+    CHECK(out.len == only2.len && memcmp(out.data, only2.data, only2.len) == 0);
+    buf_free(&out);
+    CHECK(krds_remove(two.data, two.len, &hl2, 1, &out, &removed, &why) == 0 && removed == 1);
+    CHECK(out.len == one.len && memcmp(out.data, one.data, one.len) == 0);
+    buf_free(&out);
+
+    /* the last highlight: its whole list goes and the category count drops to 2 */
+    CHECK(krds_remove(one.data, one.len, &hl, 1, &out, &removed, &why) == 0 && removed == 1);
+    CHECK(count_of(&out, "annotation.personal.highlight") == 0 && count_of(&out, "annotation.personal.note") == 1 &&
+          count_of(&out, "annotation.personal.bookmark") == 1 && count_of(&out, "saved.avl.interval.tree") == 2);
+    buf_free(&out);
+
+    /* a time-zone offset is fine; one second out is not */
+    hl.added += 3600;
+    CHECK(krds_remove(two.data, two.len, &hl, 1, &out, &removed, &why) == 0 && removed == 1);
+    buf_free(&out);
+    hl.added -= 3599;
+    CHECK(krds_remove(two.data, two.len, &hl, 1, &out, &removed, &why) != 0 && out.len == 0);
+    buf_free(&out);
+    hl.added -= 1;
+
+    /* an older clipping version carrying the record's time still matches */
+    struct clip_target versions[2] = {{CLIP_HIGHLIGHT, 4285, civil_seconds(2026, 11, 2, 9, 0, 1)}, hl};
+    CHECK(krds_remove(two.data, two.len, versions, 2, &out, &removed, &why) == 0 && removed == 1);
+    buf_free(&out);
+
+    /* only in My Clippings: the file is left as it was */
+    struct clip_target elsewhere = {CLIP_HIGHLIGHT, 2611, civil_seconds(2026, 10, 30, 21, 57, 40)};
+    CHECK(krds_remove(two.data, two.len, &elsewhere, 1, &out, &removed, &why) == 0 && removed == 0);
+    CHECK(out.len == two.len && memcmp(out.data, two.data, two.len) == 0);
+    buf_free(&out);
+
+    /* highlight with its note; then everything (annotations become "int 0") */
+    struct clip_target both[2] = {hl, {CLIP_NOTE, 4287, civil_seconds(2026, 11, 1, 21, 51, 40)}};
+    CHECK(krds_remove(one.data, one.len, both, 2, &out, &removed, &why) == 0 && removed == 2);
+    CHECK(count_of(&out, "annotation.personal.") == 1);
+    buf_free(&out);
+
+    /* damaged files are refused */
+    buf_append(&in, two.data, two.len - 1);
+    CHECK(krds_remove(in.data, in.len, &hl, 1, &out, &removed, &why) != 0);
+    buf_free(&out);
+    in.data[9] = 0x42;  /* unknown token type */
+    CHECK(krds_remove(in.data, in.len, &hl, 1, &out, &removed, &why) != 0);
+    buf_free(&out);
+    buf_free(&in);
+
+    buf_free(&two);
+    buf_free(&one);
+    buf_free(&only2);
+}
+
+static void test_clippings(void) {
+    const char *file =
+        "\xef\xbb\xbfOpen (Andre Agassi)\r\n- Your Highlight on page 11 | location 165-165 | Added on Thursday, 29 October 2026 00:18:26\r\n\r\nfirst\r\n==========\r\n"
+        "\xef\xbb\xbfOpen (Andre Agassi)\r\n- Your Highlight on page 11 | location 165-166 | Added on Thursday, 29 October 2026 00:19:00\r\n\r\nfirst, longer\r\n==========\r\n"
+        "\xef\xbb\xbfWalden (Thoreau)\r\n- Your Highlight on page 11 | location 165-165 | Added on Thursday, 29 October 2026 00:18:26\r\n\r\nother book\r\n==========\r\n";
+    const char *keep = "\xef\xbb\xbfWalden (Thoreau)\r\n- Your Highlight on page 11 | location 165-165 | Added on Thursday, 29 October 2026 00:18:26\r\n\r\nother book\r\n==========\r\n";
+    const char *heads[2] = {"\xef\xbb\xbfOpen (Andre Agassi)", "Open (Andre Agassi)"};
+    const char *metas[2] = {"- Your Highlight on page 11 | location 165-165 | Added on Thursday, 29 October 2026 00:18:26",
+                            "- Your Highlight on page 11 | location 165-166 | Added on Thursday, 29 October 2026 00:19:00"};
+    struct buf out = {0};
+    int removed;
+
+    CHECK(clippings_remove(file, strlen(file), heads, metas, 2, &out, &removed) == 0 && removed == 2);
+    CHECK(out.len == strlen(keep) && memcmp(out.data, keep, out.len) == 0);
+    buf_free(&out);
+
+    /* a pair that isn't there: the file changed, so nothing is removed */
+    const char *gone[1] = {"- Your Highlight on page 12 | location 170-171 | Added on Thursday, 29 October 2026 00:18:26"};
+    CHECK(clippings_remove(file, strlen(file), heads, gone, 1, &out, &removed) != 0 && removed == 0 && out.len == 0);
+    buf_free(&out);
+}
+
 int main(void) {
     test_apnx();
     test_url();
@@ -148,6 +309,9 @@ int main(void) {
     test_base64();
     test_json();
     test_files();
+    test_clip_meta();
+    test_krds();
+    test_clippings();
 
     if (failures) {
         fprintf(stderr, "%d failure(s)\n", failures);

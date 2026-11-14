@@ -57,6 +57,7 @@ var acks = {};
 var opened = [];
 var failSaves = false;
 var savedState = null;
+var unhighlights = [];
 
 function dataJs() {
     var notes = Object.keys(store).map(function (p) {
@@ -86,6 +87,13 @@ function helper(prop, msg) {
         delete store[args];
     } else if (prop === "open") {
         opened.push(args);
+    } else if (prop === "unhighlight") {
+        unhighlights.push(args);
+        var pairs = args.split("\n").slice(1).map(function (l) { return l.split("\t"); });
+        CLIPPINGS = CLIPPINGS.split("==========").filter(function (block) {
+            var lines = block.replace(/^\r?\n/, "").split(/\r?\n/);
+            return !pairs.some(function (p) { return lines[0] === p[0] && lines[1] === p[1]; });
+        }).join("==========");
     } else if (prop === "state") {
         savedState = args;
         return;
@@ -200,6 +208,12 @@ async function main() {
     assert.deepStrictEqual(await hl(), ["Highlight · Page 110", "Kindle note · Page 131"]);
     await shot(page, "2b-sort");
     await page.click('[data-sort="newest"]');
+
+    /* Tapping a highlight offers to delete it; Cancel leaves it */
+    await page.click("#nb-list .entry >> nth=0");
+    assert.ok(/Delete this highlight from the book\?/.test(await page.textContent("#modal-text")));
+    await page.click("#modal-cancel");
+    assert.strictEqual(unhighlights.length, 0);
     await page.click('[data-tab="all"]');
     assert.ok(!(await visible(page, "#nb-sort")));
 
@@ -343,6 +357,18 @@ async function main() {
             return out;
         });
         seen.forEach(function (i) { whole[i] = true; });
+        var cutShown = await page.$eval("#nb-list", function (list) {
+            for (var i = 0; i < list.children.length; i++) {
+                var c = list.children[i];
+                var bottom = list.scrollTop + list.clientHeight + 1;
+                if (c.offsetTop < bottom && c.offsetTop + c.offsetHeight > bottom &&
+                        getComputedStyle(c).visibility !== "hidden") {
+                    return i;
+                }
+            }
+            return -1;
+        });
+        assert.strictEqual(cutShown, -1, "nothing shown cut off at the bottom of page " + pg);
         if (pg < total) {
             await page.click("#notebook .pager.next");
         }
@@ -377,6 +403,16 @@ async function main() {
     await page.reload();
     await page.waitForFunction(function () { return document.getElementById("nb-title").textContent === "Walden" &&
         !document.getElementById("notebook").classList.contains("hidden"); }, null, { timeout: 8000 });
+
+    /* Delete a highlight: confirm, the helper is asked, the entry goes */
+    await page.click('[data-tab="highlights"]');
+    var before = await page.$$eval("#nb-list .entry", function (n) { return n.length; });
+    await page.click("#nb-list .entry >> nth=0");
+    await page.click("#modal-ok");
+    await page.waitForFunction(function (n) { return document.querySelectorAll("#nb-list .entry").length === n - 1; }, before, { timeout: 8000 });
+    assert.strictEqual(unhighlights.length, 1);
+    assert.strictEqual(unhighlights[0].split("\n")[0], "/mnt/us/documents/Walden.azw3");
+    await page.waitForFunction(function () { return document.getElementById("toast").textContent === "Deleted"; });
 
     assert.deepStrictEqual(errors, []);
     await browser.close();

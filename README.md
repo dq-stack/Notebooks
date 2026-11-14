@@ -20,6 +20,9 @@ Each book gets its own notebook. Your Kindle highlights and the notes you make o
 - **Read book** jumps straight back into the book
 - A full-height **writing screen** in a book font, with autosave
 - **Bullet lists, numbered lists and checklists** (tick items off right in the notebook)
+- **Capitals at the start of a sentence**: Shift comes on by itself after `. ? !`, at the start of a line and after a bullet
+- **Sort highlights** by newest, oldest or page
+- **Delete a highlight** from Notebooks: tap it and confirm. It goes from the book and from `My Clippings.txt`, with a backup first (see below)
 - **Loose notes** for anything not tied to a book
 - **Page numbers** for highlights, from the Kindle or worked out from the book's page file (APNX)
 - **Picks up where you left off**: reopening brings back the same notebook, page or note
@@ -27,7 +30,11 @@ Each book gets its own notebook. Your Kindle highlights and the notes you make o
   `notebooks/Walden/2026-10-18 201503.txt`
 - **Never silently loses a note:** "Saved" only appears once the text has been read back from disk
 
-Highlights and Kindle notes are read from `My Clippings.txt` and are never changed. Edit or delete them in the book itself.
+Highlights and Kindle notes are read from `My Clippings.txt`. They're only ever changed when you delete one:
+
+- Notebooks removes that highlight (and a Kindle note on it) from `My Clippings.txt` and, for books in AZW3 (the usual Calibre format), from the book's own highlight file (`.azw3r` in the book's `.sdr` folder).
+- Both files are copied to `/notebooks/.backup/<date and time>/` before anything changes, and each new file is read back and checked before it replaces the old one. If anything doesn't match exactly (location and time), nothing is deleted and you see "Not deleted".
+- Highlights in other formats, or made on another Kindle, are only removed from `My Clippings.txt`.
 
 ---
 
@@ -54,7 +61,7 @@ Delete `documents/Notebooks.sh` and `extensions/notebooks/`. Keep `/notebooks/` 
 ## How it works
 
 - The app is a web page run by the Kindle's built-in `mesquite` browser engine.
-- A small native helper (`notebooks_helper`, C) does the file work. The page sends it requests over LIPC; it can only save or delete `.txt` files inside `/mnt/us/notebooks/`, refresh the data, and open a book from `documents/`. It never runs a shell with anything the page sends.
+- A small native helper (`notebooks_helper`, C) does the file work. The page sends it requests over LIPC; it can only save or delete `.txt` files inside `/mnt/us/notebooks/`, refresh the data, open a book from `documents/`, and delete one highlight as described above. It never runs a shell with anything the page sends.
 - After every change the helper rewrites `/tmp/notebooks/data.js` (library from the Kindle's database, `My Clippings.txt`, all notes, and an acknowledgement for the request). The page reloads it and compares the saved text with what you typed.
 - **Nothing stays running in the background.** Once you leave Notebooks (Home, another app, Read book) the helper closes the app's window and exits: on a 256 MB Paperwhite 2 a browser window left loaded can starve other apps of memory. Your place (notebook, page, open note) is kept in `/tmp/notebooks/state.js`, so reopening lands where you left off.
 - The helper runs from a copy in `/tmp`, so plugging in over USB can't leave it holding files open.
